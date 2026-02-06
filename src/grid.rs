@@ -143,6 +143,13 @@ impl Grid {
             )
     }
 
+    /// Returns all rows in the buffer: scrollback (oldest first) followed by
+    /// the current screen rows. Unlike `visible_rows()`, this returns the
+    /// entire history regardless of screen height or scrollback offset.
+    pub fn all_rows(&self) -> impl Iterator<Item = &crate::row::Row> {
+        self.scrollback.iter().chain(self.rows.iter())
+    }
+
     pub fn drawing_rows(&self) -> impl Iterator<Item = &crate::row::Row> {
         self.rows.iter()
     }
@@ -212,6 +219,52 @@ impl Grid {
         while contents.ends_with('\n') {
             contents.truncate(contents.len() - 1);
         }
+    }
+
+    /// Write the plain text contents of the full buffer (scrollback +
+    /// screen).
+    pub fn write_contents_full(&self, contents: &mut String) {
+        let mut wrapping = false;
+        for row in self.all_rows() {
+            row.write_contents(contents, 0, self.size.cols, wrapping);
+            if !row.wrapped() {
+                contents.push('\n');
+            }
+            wrapping = row.wrapped();
+        }
+
+        while contents.ends_with('\n') {
+            contents.truncate(contents.len() - 1);
+        }
+    }
+
+    /// Write the formatted contents of the full buffer (scrollback +
+    /// screen) with ANSI escape codes preserved. Uses newline-based output
+    /// instead of cursor positioning, avoiding u16 row index limitations.
+    pub fn write_contents_formatted_full(
+        &self,
+        contents: &mut Vec<u8>,
+    ) -> crate::attrs::Attrs {
+        crate::term::ClearAttrs.write_buf(contents);
+
+        let mut prev_attrs = crate::attrs::Attrs::default();
+        let mut wrapping = false;
+
+        for (i, row) in self.all_rows().enumerate() {
+            if i > 0 && !wrapping {
+                contents.extend_from_slice(b"\r\n");
+            }
+
+            prev_attrs = row.write_contents_formatted_inline(
+                contents,
+                0,
+                self.size.cols,
+                prev_attrs,
+            );
+            wrapping = row.wrapped();
+        }
+
+        prev_attrs
     }
 
     pub fn write_contents_formatted(

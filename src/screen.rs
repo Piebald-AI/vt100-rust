@@ -297,6 +297,96 @@ impl Screen {
         })
     }
 
+    /// Returns the plain text contents of the full terminal buffer,
+    /// including all scrollback history and the current screen.
+    ///
+    /// This is like [`contents`](Self::contents) but includes scrollback
+    /// lines that have scrolled off the top of the visible viewport.
+    ///
+    /// Always returns the main grid's contents, even when the alternate
+    /// screen is active, since the alternate screen has no meaningful
+    /// scrollback history.
+    #[must_use]
+    pub fn contents_full(&self) -> String {
+        let mut contents = String::new();
+        self.grid.write_contents_full(&mut contents);
+        contents
+    }
+
+    /// Returns the formatted contents of the full terminal buffer,
+    /// including all scrollback history and the current screen.
+    ///
+    /// Formatting information (colors, bold, underline, etc.) will be
+    /// included inline as SGR escape codes. Lines are separated by `\r\n`.
+    /// No cursor positioning escape codes are emitted.
+    ///
+    /// This is like [`contents_formatted`](Self::contents_formatted) but
+    /// includes scrollback lines that have scrolled off the top of the
+    /// visible viewport, and uses line-based output instead of absolute
+    /// cursor positioning.
+    ///
+    /// Always returns the main grid's contents, even when the alternate
+    /// screen is active, since the alternate screen has no meaningful
+    /// scrollback history.
+    #[must_use]
+    pub fn contents_formatted_full(&self) -> Vec<u8> {
+        let mut contents = vec![];
+        self.grid.write_contents_formatted_full(&mut contents);
+        contents
+    }
+
+    /// Returns the plain text contents of the full terminal buffer by row.
+    /// Includes scrollback lines followed by current screen lines.
+    ///
+    /// This is like [`rows`](Self::rows) but includes scrollback lines
+    /// that have scrolled off the top of the visible viewport.
+    ///
+    /// Always returns the main grid's rows, even when the alternate
+    /// screen is active.
+    ///
+    /// Newlines will not be included.
+    pub fn rows_full(
+        &self,
+        start: u16,
+        width: u16,
+    ) -> impl Iterator<Item = String> + '_ {
+        self.grid.all_rows().map(move |row| {
+            let mut contents = String::new();
+            row.write_contents(&mut contents, start, width, false);
+            contents
+        })
+    }
+
+    /// Returns the formatted contents of the full terminal buffer by row.
+    /// Includes scrollback lines followed by current screen lines.
+    ///
+    /// Each row contains inline SGR formatting codes but no cursor
+    /// positioning.
+    ///
+    /// This is like [`rows_formatted`](Self::rows_formatted) but includes
+    /// scrollback lines that have scrolled off the top of the visible
+    /// viewport.
+    ///
+    /// Always returns the main grid's rows, even when the alternate
+    /// screen is active.
+    pub fn rows_formatted_full(
+        &self,
+        start: u16,
+        width: u16,
+    ) -> impl Iterator<Item = Vec<u8>> + '_ {
+        let mut prev_attrs = crate::attrs::Attrs::default();
+        self.grid.all_rows().map(move |row| {
+            let mut contents = vec![];
+            prev_attrs = row.write_contents_formatted_inline(
+                &mut contents,
+                start,
+                width,
+                prev_attrs,
+            );
+            contents
+        })
+    }
+
     /// Returns a terminal byte stream sufficient to turn the visible contents
     /// of the screen described by `prev` into the visible contents of the
     /// screen described by `self`.

@@ -278,6 +278,95 @@ impl Row {
         (prev_pos, prev_attrs)
     }
 
+    /// Write this row's formatted cell contents without cursor positioning.
+    /// Only emits SGR attribute changes and cell text. Cells with
+    /// non-default attributes but no text content are rendered as spaces
+    /// with the appropriate attributes.
+    /// Returns the active attributes after this row.
+    pub fn write_contents_formatted_inline(
+        &self,
+        contents: &mut Vec<u8>,
+        start: u16,
+        width: u16,
+        mut prev_attrs: crate::attrs::Attrs,
+    ) -> crate::attrs::Attrs {
+        let default_cell = crate::Cell::new();
+        let mut prev_was_wide = false;
+
+        // First, find the last column that has non-default content so we
+        // can avoid trailing whitespace/formatting (matching the behavior
+        // of write_contents which omits trailing empty cells).
+        let mut last_non_default: Option<u16> = None;
+        for (col, cell) in self
+            .cells()
+            .enumerate()
+            .skip(usize::from(start))
+            .take(usize::from(width))
+        {
+            let col: u16 = col.try_into().unwrap();
+            if cell != &default_cell {
+                last_non_default = Some(col);
+            }
+        }
+
+        let Some(end_col) = last_non_default else {
+            return prev_attrs;
+        };
+
+        let mut prev_col = start;
+        for (col, cell) in self
+            .cells()
+            .enumerate()
+            .skip(usize::from(start))
+            .take(usize::from(width))
+        {
+            if prev_was_wide {
+                prev_was_wide = false;
+                continue;
+            }
+            prev_was_wide = cell.is_wide();
+
+            let col: u16 = col.try_into().unwrap();
+            if col > end_col {
+                break;
+            }
+
+            if cell.has_contents() {
+                // Fill any gap with spaces (for cells between prev_col
+                // and this col that had no content)
+                for _ in prev_col..col {
+                    contents.push(b' ');
+                }
+                prev_col = col;
+
+                let attrs = cell.attrs();
+                if &prev_attrs != attrs {
+                    attrs.write_escape_code_diff(contents, &prev_attrs);
+                    prev_attrs = *attrs;
+                }
+                contents.extend(cell.contents().as_bytes());
+                prev_col += if cell.is_wide() { 2 } else { 1 };
+            } else if cell != &default_cell {
+                // Cell has non-default attrs but no text content (e.g.
+                // background color). Emit a space with those attrs.
+                for _ in prev_col..col {
+                    contents.push(b' ');
+                }
+                prev_col = col;
+
+                let attrs = cell.attrs();
+                if &prev_attrs != attrs {
+                    attrs.write_escape_code_diff(contents, &prev_attrs);
+                    prev_attrs = *attrs;
+                }
+                contents.push(b' ');
+                prev_col += 1;
+            }
+        }
+
+        prev_attrs
+    }
+
     // while it's true that most of the logic in this is identical to
     // write_contents_formatted, i can't figure out how to break out the
     // common parts without making things noticeably slower.
