@@ -335,6 +335,45 @@ impl Screen {
         contents
     }
 
+    /// Returns escape codes suitable for replaying the full terminal buffer
+    /// and restoring the current terminal state.
+    ///
+    /// This includes main-grid scrollback followed by the current main-grid
+    /// screen contents, restores active drawing attributes, cursor
+    /// visibility, cursor position, and input modes. No terminal query
+    /// sequences are emitted.
+    ///
+    /// Like [`contents_formatted_full`](Self::contents_formatted_full), this
+    /// always serializes the main grid, even when the alternate screen is
+    /// active. If the cursor row plus scrollback length cannot fit in `u16`,
+    /// cursor position restoration is omitted.
+    #[must_use]
+    pub fn state_formatted_full(&self) -> Vec<u8> {
+        let mut contents = vec![];
+        self.write_state_formatted_full(&mut contents);
+        contents
+    }
+
+    /// Writes escape codes suitable for replaying the full terminal buffer
+    /// and restoring the current terminal state into `contents`.
+    pub fn write_state_formatted_full(&self, contents: &mut Vec<u8>) {
+        crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
+        let prev_attrs = self.grid.write_contents_formatted_full(contents);
+        self.attrs.write_escape_code_diff(contents, &prev_attrs);
+
+        if let Ok(row_offset) = self.grid.scrollback_rows_len().try_into() {
+            self.grid.write_cursor_position_formatted_with_row_offset(
+                contents,
+                row_offset,
+                None,
+                Some(self.attrs),
+            );
+            self.attrs.write_escape_code_diff(contents, &prev_attrs);
+        }
+
+        self.write_input_mode_formatted(contents);
+    }
+
     /// Returns the plain text contents of the full terminal buffer by row.
     /// Includes scrollback lines followed by current screen lines.
     ///

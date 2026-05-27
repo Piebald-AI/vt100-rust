@@ -198,6 +198,10 @@ impl Grid {
         self.scrollback_len
     }
 
+    pub fn scrollback_rows_len(&self) -> usize {
+        self.scrollback.len()
+    }
+
     pub fn scrollback(&self) -> usize {
         self.scrollback_offset
     }
@@ -351,13 +355,29 @@ impl Grid {
         prev_pos: Option<Pos>,
         prev_attrs: Option<crate::attrs::Attrs>,
     ) {
+        self.write_cursor_position_formatted_with_row_offset(
+            contents, 0, prev_pos, prev_attrs,
+        );
+    }
+
+    pub fn write_cursor_position_formatted_with_row_offset(
+        &self,
+        contents: &mut Vec<u8>,
+        row_offset: u16,
+        prev_pos: Option<Pos>,
+        prev_attrs: Option<crate::attrs::Attrs>,
+    ) {
+        let pos = Pos {
+            row: self.pos.row.saturating_add(row_offset),
+            col: self.pos.col,
+        };
         let prev_attrs = prev_attrs.unwrap_or_default();
         // writing a character to the last column of a row doesn't wrap the
         // cursor immediately - it waits until the next character is actually
         // drawn. it is only possible for the cursor to have this kind of
         // position after drawing a character though, so if we end in this
         // position, we need to redraw the character at the end of the row.
-        if prev_pos != Some(self.pos) && self.pos.col >= self.size.cols {
+        if prev_pos != Some(pos) && self.pos.col >= self.size.cols {
             let mut pos = Pos {
                 row: self.pos.row,
                 col: self.size.cols - 1,
@@ -498,10 +518,9 @@ impl Grid {
                 }
             }
         } else if let Some(prev_pos) = prev_pos {
-            crate::term::MoveFromTo::new(prev_pos, self.pos)
-                .write_buf(contents);
+            crate::term::MoveFromTo::new(prev_pos, pos).write_buf(contents);
         } else {
-            crate::term::MoveTo::new(self.pos).write_buf(contents);
+            crate::term::MoveTo::new(pos).write_buf(contents);
         }
     }
 
