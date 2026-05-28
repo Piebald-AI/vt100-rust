@@ -338,15 +338,18 @@ impl Screen {
     /// Returns escape codes suitable for replaying the full terminal buffer
     /// and restoring the current terminal state.
     ///
-    /// This includes main-grid scrollback followed by the current main-grid
-    /// screen contents, restores active drawing attributes, cursor
-    /// visibility, cursor position, and input modes. No terminal query
-    /// sequences are emitted.
+    /// This includes active terminal contents, restores active drawing
+    /// attributes, cursor visibility, cursor position, and input modes. No
+    /// terminal query sequences are emitted.
     ///
-    /// Like [`contents_formatted_full`](Self::contents_formatted_full), this
-    /// always serializes the main grid, even when the alternate screen is
-    /// active. If the cursor row plus scrollback length cannot fit in `u16`,
-    /// cursor position restoration is omitted.
+    /// When the alternate screen is inactive, this serializes main-grid
+    /// scrollback followed by the current main-grid screen contents. If the
+    /// cursor row plus scrollback length cannot fit in `u16`, cursor position
+    /// restoration is omitted.
+    ///
+    /// When the alternate screen is active, this enters the alternate screen
+    /// and serializes only its visible viewport, since the alternate screen
+    /// has no meaningful scrollback history.
     #[must_use]
     pub fn state_formatted_full(&self) -> Vec<u8> {
         let mut contents = vec![];
@@ -358,17 +361,33 @@ impl Screen {
     /// and restoring the current terminal state into `contents`.
     pub fn write_state_formatted_full(&self, contents: &mut Vec<u8>) {
         crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
-        let prev_attrs = self.grid.write_contents_formatted_full(contents);
-        self.attrs.write_escape_code_diff(contents, &prev_attrs);
 
-        if let Ok(row_offset) = self.grid.scrollback_rows_len().try_into() {
-            self.grid.write_cursor_position_formatted_with_row_offset(
+        if self.alternate_screen() {
+            contents.extend_from_slice(b"\x1b[?1049h");
+            let prev_attrs =
+                self.alternate_grid.write_contents_formatted(contents);
+            self.attrs.write_escape_code_diff(contents, &prev_attrs);
+            self.alternate_grid.write_cursor_position_formatted(
                 contents,
-                row_offset,
                 None,
                 Some(self.attrs),
             );
             self.attrs.write_escape_code_diff(contents, &prev_attrs);
+        } else {
+            let prev_attrs =
+                self.grid.write_contents_formatted_full(contents);
+            self.attrs.write_escape_code_diff(contents, &prev_attrs);
+
+            if let Ok(row_offset) = self.grid.scrollback_rows_len().try_into()
+            {
+                self.grid.write_cursor_position_formatted_with_row_offset(
+                    contents,
+                    row_offset,
+                    None,
+                    Some(self.attrs),
+                );
+                self.attrs.write_escape_code_diff(contents, &prev_attrs);
+            }
         }
 
         self.write_input_mode_formatted(contents);

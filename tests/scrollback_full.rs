@@ -69,7 +69,10 @@ fn formatting_preservation() {
     new_parser.process(&formatted);
 
     // Verify the text matches
-    assert_eq!(new_parser.screen().contents(), parser.screen().contents_full());
+    assert_eq!(
+        new_parser.screen().contents(),
+        parser.screen().contents_full()
+    );
 
     // Verify formatting on specific cells
     // Row 0 (red line): should be red (color idx 1)

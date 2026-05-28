@@ -17,7 +17,8 @@ fn state_formatted_full_restores_text_and_formatting() {
     );
 
     let state = parser.screen().state_formatted_full();
-    let mut replay = vt100::Parser::new(full_line_count(parser.screen()), 80, 0);
+    let mut replay =
+        vt100::Parser::new(full_line_count(parser.screen()), 80, 0);
     replay.process(&state);
 
     assert_eq!(replay.screen().contents(), parser.screen().contents_full());
@@ -112,4 +113,125 @@ fn contents_formatted_full_remains_history_only() {
     assert_ne!(replay.screen().cursor_position(), (3, 5));
     assert!(!replay.screen().hide_cursor());
     assert!(!replay.screen().bracketed_paste());
+}
+
+#[test]
+fn state_full_alternate_screen_replays_visible_content() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(
+        b"main\r\ncontent\x1b[?1049h\x1b[31malt red\r\n\x1b[32;1malt green",
+    );
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(3, 80, 0);
+    replay.process(&state);
+
+    assert!(replay.screen().alternate_screen());
+    assert_eq!(replay.screen().contents(), parser.screen().contents());
+    assert_eq!(
+        replay.screen().cell(0, 0).unwrap().fgcolor(),
+        vt100::Color::Idx(1)
+    );
+    assert_eq!(
+        replay.screen().cell(1, 0).unwrap().fgcolor(),
+        vt100::Color::Idx(2)
+    );
+    assert!(replay.screen().cell(1, 0).unwrap().bold());
+}
+
+#[test]
+fn state_full_alternate_screen_restores_cursor() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(b"main\x1b[?1049halt\x1b[2;6H");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(3, 80, 0);
+    replay.process(&state);
+
+    assert!(replay.screen().alternate_screen());
+    assert_eq!(parser.screen().cursor_position(), (1, 5));
+    assert_eq!(replay.screen().cursor_position(), (1, 5));
+}
+
+#[test]
+fn state_full_alternate_screen_restores_cursor_visibility() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(b"main\x1b[?1049halt\x1b[?25l");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(3, 80, 0);
+    replay.process(&state);
+
+    assert!(replay.screen().alternate_screen());
+    assert!(parser.screen().hide_cursor());
+    assert!(replay.screen().hide_cursor());
+}
+
+#[test]
+fn state_full_alternate_screen_restores_input_modes() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(
+        b"\x1b[?1049halt\x1b=\x1b[?1h\x1b[?2004h\x1b[?1002h\x1b[?1006h",
+    );
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(3, 80, 0);
+    replay.process(&state);
+
+    assert!(replay.screen().alternate_screen());
+    assert!(replay.screen().application_keypad());
+    assert!(replay.screen().application_cursor());
+    assert!(replay.screen().bracketed_paste());
+    assert_eq!(
+        replay.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::ButtonMotion
+    );
+    assert_eq!(
+        replay.screen().mouse_protocol_encoding(),
+        vt100::MouseProtocolEncoding::Sgr
+    );
+}
+
+#[test]
+fn state_full_alternate_screen_does_not_include_queries() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(b"\x1b[?1049h\x1b[31mhello\r\nworld\x1b[?25l\x1b[?2004h");
+
+    let state = parser.screen().state_formatted_full();
+
+    assert!(!state.windows(b"\x1b]11;?".len()).any(|w| w == b"\x1b]11;?"));
+    assert!(!state.windows(b"\x1b[6n".len()).any(|w| w == b"\x1b[6n"));
+    assert!(!state.windows(b"\x1b[c".len()).any(|w| w == b"\x1b[c"));
+    assert!(!state.windows(b"\x1b[0c".len()).any(|w| w == b"\x1b[0c"));
+    assert!(!state.windows(b"\x1b[>c".len()).any(|w| w == b"\x1b[>c"));
+}
+
+#[test]
+fn contents_formatted_full_still_uses_main_history() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(
+        b"main 1\r\nmain 2\r\nmain 3\r\nmain 4\x1b[?1049halt content",
+    );
+
+    let formatted = parser.screen().contents_formatted_full();
+    let mut replay =
+        vt100::Parser::new(full_line_count(parser.screen()), 80, 0);
+    replay.process(&formatted);
+
+    assert!(!replay.screen().alternate_screen());
+    assert_eq!(replay.screen().contents(), parser.screen().contents_full());
+    assert!(!replay.screen().contents().contains("alt content"));
+}
+
+#[test]
+fn state_full_exits_alternate_when_original_not_active() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(b"main\x1b[?1049halt\x1b[?1049lback");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(3, 80, 0);
+    replay.process(&state);
+
+    assert!(!parser.screen().alternate_screen());
+    assert!(!replay.screen().alternate_screen());
 }
