@@ -62,6 +62,9 @@ pub struct Screen {
     modes: u8,
     mouse_protocol_mode: MouseProtocolMode,
     mouse_protocol_encoding: MouseProtocolEncoding,
+
+    window_title: Option<Vec<u8>>,
+    window_icon_name: Option<Vec<u8>>,
 }
 
 impl Screen {
@@ -81,7 +84,30 @@ impl Screen {
             modes: 0,
             mouse_protocol_mode: MouseProtocolMode::default(),
             mouse_protocol_encoding: MouseProtocolEncoding::default(),
+
+            window_title: None,
+            window_icon_name: None,
         }
+    }
+
+    pub(crate) fn set_window_title(&mut self, title: &[u8]) {
+        self.window_title = Some(title.to_vec());
+    }
+
+    pub(crate) fn set_window_icon_name(&mut self, icon_name: &[u8]) {
+        self.window_icon_name = Some(icon_name.to_vec());
+    }
+
+    /// Returns the current window title.
+    #[must_use]
+    pub fn window_title(&self) -> Option<&[u8]> {
+        self.window_title.as_deref()
+    }
+
+    /// Returns the current window icon name.
+    #[must_use]
+    pub fn window_icon_name(&self) -> Option<&[u8]> {
+        self.window_icon_name.as_deref()
     }
 
     /// Resizes the terminal.

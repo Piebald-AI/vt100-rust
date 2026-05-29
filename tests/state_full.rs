@@ -101,6 +101,17 @@ fn state_formatted_full_does_not_emit_terminal_queries() {
 }
 
 #[test]
+fn state_formatted_full_preserves_title_state_without_emitting_title_osc() {
+    let mut parser = vt100::Parser::new(3, 80, 100);
+    parser.process(b"\x1b]2;title\x1b\\hello");
+
+    let state = parser.screen().state_formatted_full();
+
+    assert_eq!(parser.screen().window_title(), Some(&b"title"[..]));
+    assert!(!state.windows(b"]2;title".len()).any(|w| w == b"]2;title"));
+}
+
+#[test]
 fn contents_formatted_full_remains_history_only() {
     let mut parser = vt100::Parser::new(3, 80, 100);
     parser.process(b"1\r\n2\r\n3\r\n4\r\n5\x1b[2;6H\x1b[?25l\x1b[?2004h");

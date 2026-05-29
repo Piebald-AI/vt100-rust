@@ -37,6 +37,26 @@ fn title_icon_name() {
 }
 
 #[test]
+fn screen_tracks_window_title_and_icon_name() {
+    let mut parser = vt100::Parser::new(24, 80, 0);
+
+    assert_eq!(parser.screen().window_icon_name(), None);
+    assert_eq!(parser.screen().window_title(), None);
+
+    parser.process(b"\x1b]1;icon\x07");
+    assert_eq!(parser.screen().window_icon_name(), Some(&b"icon"[..]));
+    assert_eq!(parser.screen().window_title(), None);
+
+    parser.process(b"\x1b]2;title\x07");
+    assert_eq!(parser.screen().window_icon_name(), Some(&b"icon"[..]));
+    assert_eq!(parser.screen().window_title(), Some(&b"title"[..]));
+
+    parser.process(b"\x1b]0;both\x07");
+    assert_eq!(parser.screen().window_icon_name(), Some(&b"both"[..]));
+    assert_eq!(parser.screen().window_title(), Some(&b"both"[..]));
+}
+
+#[test]
 fn clipboard() {
     #[derive(Default)]
     struct Clipboard {
