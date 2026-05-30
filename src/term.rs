@@ -657,7 +657,7 @@ impl BufWrite for MouseProtocolEncoding {
     }
 }
 
-fn extend_itoa<I: itoa::Integer>(buf: &mut Vec<u8>, i: I) {
+pub(crate) fn extend_itoa<I: itoa::Integer>(buf: &mut Vec<u8>, i: I) {
     let mut itoa_buf = itoa::Buffer::new();
     buf.extend_from_slice(itoa_buf.format(i).as_bytes());
 }

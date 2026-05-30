@@ -13,6 +13,20 @@ fn origin_mode() {
 }
 
 #[test]
+fn scroll_region_accessor_tracks_region_and_reset() {
+    let mut parser = vt100::Parser::new(5, 10, 0);
+
+    assert_eq!(parser.screen().scroll_region(), (0, 4));
+
+    parser.process(b"\x1b[2;4r");
+    assert_eq!(parser.screen().scroll_region(), (1, 3));
+    assert_eq!(parser.screen().cursor_position(), (1, 0));
+
+    parser.process(b"\x1b[r");
+    assert_eq!(parser.screen().scroll_region(), (0, 4));
+}
+
+#[test]
 fn scrollback() {
     let mut parser = vt100::Parser::new(24, 80, 10);
 

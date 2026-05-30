@@ -1,5 +1,9 @@
 mod helpers;
 
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
 fn full_line_count(screen: &vt100::Screen) -> u16 {
     let contents = screen.contents_full();
     if contents.is_empty() {
@@ -87,6 +91,58 @@ fn state_formatted_full_restores_input_modes() {
 }
 
 #[test]
+fn state_formatted_full_restores_piebald_modes() {
+    let mut parser = vt100::Parser::new(5, 10, 100);
+    parser.process(b"\x1b[4h\x1b[2;4r\x1b[?6h\x1b[?7l\x1b[?45h\x1b[?1004h");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(5, 10, 0);
+    replay.process(&state);
+
+    assert!(contains_bytes(&state, b"\x1b[4h"));
+    assert!(contains_bytes(&state, b"\x1b[2;4r"));
+    assert!(contains_bytes(&state, b"\x1b[?6h"));
+    assert!(contains_bytes(&state, b"\x1b[?7l"));
+    assert!(contains_bytes(&state, b"\x1b[?45h"));
+    assert!(contains_bytes(&state, b"\x1b[?1004h"));
+
+    assert!(replay.screen().insert_mode());
+    assert!(replay.screen().origin_mode());
+    assert!(!replay.screen().wraparound_mode());
+    assert!(replay.screen().reverse_wraparound_mode());
+    assert!(replay.screen().send_focus_mode());
+    assert_eq!(replay.screen().scroll_region(), (1, 3));
+}
+
+#[test]
+fn state_formatted_full_omits_default_piebald_modes_and_region() {
+    let parser = vt100::Parser::new(5, 10, 100);
+    let state = parser.screen().state_formatted_full();
+
+    assert!(!contains_bytes(&state, b"\x1b[4h"));
+    assert!(!contains_bytes(&state, b"\x1b[?6h"));
+    assert!(!contains_bytes(&state, b"\x1b[?7l"));
+    assert!(!contains_bytes(&state, b"\x1b[?45h"));
+    assert!(!contains_bytes(&state, b"\x1b[?1004h"));
+    assert!(!contains_bytes(&state, b"\x1b[1;5r"));
+}
+
+#[test]
+fn state_formatted_full_preserves_origin_region_and_cursor() {
+    let mut parser = vt100::Parser::new(5, 10, 100);
+    parser.process(b"\x1b[2;4r\x1b[?6h\x1b[2;3H");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(5, 10, 0);
+    replay.process(&state);
+
+    assert_eq!(parser.screen().cursor_position(), (2, 2));
+    assert_eq!(replay.screen().cursor_position(), (2, 2));
+    assert!(replay.screen().origin_mode());
+    assert_eq!(replay.screen().scroll_region(), (1, 3));
+}
+
+#[test]
 fn state_formatted_full_does_not_emit_terminal_queries() {
     let mut parser = vt100::Parser::new(3, 80, 100);
     parser.process(b"\x1b[31mhello\r\nworld\x1b[?25l\x1b[?2004h");
@@ -162,6 +218,22 @@ fn state_full_alternate_screen_restores_cursor() {
     assert!(replay.screen().alternate_screen());
     assert_eq!(parser.screen().cursor_position(), (1, 5));
     assert_eq!(replay.screen().cursor_position(), (1, 5));
+}
+
+#[test]
+fn state_full_alternate_screen_preserves_origin_region_and_cursor() {
+    let mut parser = vt100::Parser::new(5, 10, 100);
+    parser.process(b"\x1b[?1049h\x1b[2;4r\x1b[?6h\x1b[2;3H@");
+
+    let state = parser.screen().state_formatted_full();
+    let mut replay = vt100::Parser::new(5, 10, 100);
+    replay.process(&state);
+
+    assert_eq!(parser.screen().cursor_position(), (2, 3));
+    assert_eq!(replay.screen().cursor_position(), (2, 3));
+    assert!(replay.screen().alternate_screen());
+    assert!(replay.screen().origin_mode());
+    assert_eq!(replay.screen().scroll_region(), (1, 3));
 }
 
 #[test]

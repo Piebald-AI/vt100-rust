@@ -356,7 +356,7 @@ impl Grid {
         prev_attrs: Option<crate::attrs::Attrs>,
     ) {
         self.write_cursor_position_formatted_with_row_offset(
-            contents, 0, prev_pos, prev_attrs,
+            contents, 0, false, prev_pos, prev_attrs,
         );
     }
 
@@ -364,11 +364,17 @@ impl Grid {
         &self,
         contents: &mut Vec<u8>,
         row_offset: u16,
+        origin_relative: bool,
         prev_pos: Option<Pos>,
         prev_attrs: Option<crate::attrs::Attrs>,
     ) {
+        let row = self.pos.row.saturating_add(row_offset);
         let pos = Pos {
-            row: self.pos.row.saturating_add(row_offset),
+            row: if origin_relative {
+                row.saturating_sub(self.scroll_top)
+            } else {
+                row
+            },
             col: self.pos.col,
         };
         let prev_attrs = prev_attrs.unwrap_or_default();
@@ -675,8 +681,16 @@ impl Grid {
         self.pos.row >= self.scroll_top && self.pos.row <= self.scroll_bottom
     }
 
+    pub fn scroll_region(&self) -> (u16, u16) {
+        (self.scroll_top, self.scroll_bottom)
+    }
+
     fn scroll_region_active(&self) -> bool {
         self.scroll_top != 0 || self.scroll_bottom != self.size.rows - 1
+    }
+
+    pub fn origin_mode(&self) -> bool {
+        self.origin_mode
     }
 
     pub fn set_origin_mode(&mut self, mode: bool) {
@@ -734,6 +748,19 @@ impl Grid {
 
     pub fn col_dec(&mut self, count: u16) {
         self.pos.col = self.pos.col.saturating_sub(count);
+    }
+
+    pub fn reverse_wrap_col_dec(&mut self, count: u16) {
+        for _ in 0..count {
+            if self.pos.col == 0 {
+                if self.pos.row > 0 {
+                    self.pos.row -= 1;
+                    self.pos.col = self.size.cols - 1;
+                }
+            } else {
+                self.pos.col -= 1;
+            }
+        }
     }
 
     pub fn col_tab(&mut self) {
