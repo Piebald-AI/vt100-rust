@@ -69,6 +69,9 @@ pub struct Screen {
 
     window_title: Option<Vec<u8>>,
     window_icon_name: Option<Vec<u8>>,
+
+    hyperlinks: Vec<crate::Hyperlink>,
+    active_hyperlink: Option<crate::HyperlinkId>,
 }
 
 impl Screen {
@@ -91,6 +94,9 @@ impl Screen {
 
             window_title: None,
             window_icon_name: None,
+
+            hyperlinks: Vec::new(),
+            active_hyperlink: None,
         }
     }
 
@@ -112,6 +118,54 @@ impl Screen {
     #[must_use]
     pub fn window_icon_name(&self) -> Option<&[u8]> {
         self.window_icon_name.as_deref()
+    }
+
+    pub(crate) fn set_hyperlink(&mut self, params: &[u8], uri: &[u8]) {
+        if uri.is_empty() {
+            if params.is_empty() {
+                self.active_hyperlink = None;
+            }
+            return;
+        }
+
+        let id = self
+            .hyperlinks
+            .iter()
+            .position(|link| link.params() == params && link.uri() == uri)
+            .map_or_else(
+                || {
+                    let id = crate::HyperlinkId(
+                        self.hyperlinks.len().try_into().unwrap_or(u32::MAX),
+                    );
+                    self.hyperlinks.push(crate::Hyperlink::new(
+                        params.to_vec(),
+                        uri.to_vec(),
+                    ));
+                    id
+                },
+                |idx| crate::HyperlinkId(idx.try_into().unwrap_or(u32::MAX)),
+            );
+        self.active_hyperlink = Some(id);
+    }
+
+    /// Returns hyperlink metadata for a hyperlink identifier.
+    #[must_use]
+    pub fn hyperlink(&self, id: crate::HyperlinkId) -> Option<&crate::Hyperlink> {
+        self.hyperlinks.get(usize::try_from(id.0).ok()?)
+    }
+
+    /// Returns hyperlink metadata for the cell at the given location, if any.
+    #[must_use]
+    pub fn cell_hyperlink(&self, row: u16, col: u16) -> Option<&crate::Hyperlink> {
+        self.cell(row, col)
+            .and_then(|cell| cell.hyperlink_id())
+            .and_then(|id| self.hyperlink(id))
+    }
+
+    /// Returns metadata for the currently active OSC 8 hyperlink, if any.
+    #[must_use]
+    pub fn active_hyperlink(&self) -> Option<&crate::Hyperlink> {
+        self.active_hyperlink.and_then(|id| self.hyperlink(id))
     }
 
     /// Resizes the terminal.
@@ -254,6 +308,7 @@ impl Screen {
     pub fn state_formatted(&self) -> Vec<u8> {
         let mut contents = vec![];
         self.write_contents_formatted(&mut contents);
+        self.write_active_hyperlink_formatted(&mut contents);
         self.write_input_mode_formatted(&mut contents);
         contents
     }
@@ -265,7 +320,11 @@ impl Screen {
     #[must_use]
     pub fn state_diff(&self, prev: &Self) -> Vec<u8> {
         let mut contents = vec![];
+        if prev.active_hyperlink.is_some() {
+            crate::row::write_hyperlink_end(&mut contents);
+        }
         self.write_contents_diff(&mut contents, prev);
+        self.write_active_hyperlink_formatted(&mut contents);
         self.write_input_mode_diff(&mut contents, prev);
         contents
     }
@@ -284,7 +343,9 @@ impl Screen {
 
     fn write_contents_formatted(&self, contents: &mut Vec<u8>) {
         crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
-        let prev_attrs = self.grid().write_contents_formatted(contents);
+        let prev_attrs = self
+            .grid()
+            .write_contents_formatted(contents, &self.hyperlinks);
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
     }
 
@@ -311,7 +372,7 @@ impl Screen {
             // visible_rows can never return enough rows to overflow here
             let i = i.try_into().unwrap();
             let mut contents = vec![];
-            row.write_contents_formatted(
+            let (_, _, mut prev_hyperlink_id) = row.write_contents_formatted(
                 &mut contents,
                 start,
                 width,
@@ -319,7 +380,10 @@ impl Screen {
                 wrapping,
                 None,
                 None,
+                None,
+                &self.hyperlinks,
             );
+            crate::row::close_hyperlink(&mut contents, &mut prev_hyperlink_id);
             if start == 0 && width == self.grid.size().cols {
                 wrapping = row.wrapped();
             }
@@ -361,7 +425,8 @@ impl Screen {
     #[must_use]
     pub fn contents_formatted_full(&self) -> Vec<u8> {
         let mut contents = vec![];
-        self.grid.write_contents_formatted_full(&mut contents);
+        self.grid
+            .write_contents_formatted_full(&mut contents, &self.hyperlinks);
         contents
     }
 
@@ -394,8 +459,9 @@ impl Screen {
 
         if self.alternate_screen() {
             contents.extend_from_slice(b"\x1b[?1049h");
-            let prev_attrs =
-                self.alternate_grid.write_contents_formatted(contents);
+            let prev_attrs = self
+                .alternate_grid
+                .write_contents_formatted(contents, &self.hyperlinks);
             self.attrs.write_escape_code_diff(contents, &prev_attrs);
             self.write_scroll_region_formatted(contents);
             if self.origin_mode() {
@@ -410,8 +476,9 @@ impl Screen {
             );
             self.attrs.write_escape_code_diff(contents, &prev_attrs);
         } else {
-            let prev_attrs =
-                self.grid.write_contents_formatted_full(contents);
+            let prev_attrs = self
+                .grid
+                .write_contents_formatted_full(contents, &self.hyperlinks);
             self.attrs.write_escape_code_diff(contents, &prev_attrs);
 
             self.write_scroll_region_formatted(contents);
@@ -432,7 +499,14 @@ impl Screen {
             }
         }
 
+        self.write_active_hyperlink_formatted(contents);
         self.write_input_mode_formatted(contents);
+    }
+
+    fn write_active_hyperlink_formatted(&self, contents: &mut Vec<u8>) {
+        if let Some(link) = self.active_hyperlink() {
+            crate::row::write_hyperlink_start(contents, link);
+        }
     }
 
     /// Returns the plain text contents of the full terminal buffer by row.
@@ -475,13 +549,16 @@ impl Screen {
         width: u16,
     ) -> impl Iterator<Item = Vec<u8>> + '_ {
         let mut prev_attrs = crate::attrs::Attrs::default();
+        let mut prev_hyperlink_id = None;
         self.grid.all_rows().map(move |row| {
             let mut contents = vec![];
-            prev_attrs = row.write_contents_formatted_inline(
+            (prev_attrs, prev_hyperlink_id) = row.write_contents_formatted_inline(
                 &mut contents,
                 start,
                 width,
                 prev_attrs,
+                prev_hyperlink_id,
+                &self.hyperlinks,
             );
             contents
         })
@@ -513,6 +590,8 @@ impl Screen {
             contents,
             prev.grid(),
             prev.attrs,
+            &self.hyperlinks,
+            &prev.hyperlinks,
         );
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
     }
@@ -542,9 +621,11 @@ impl Screen {
                 // visible_rows can never return enough rows to overflow here
                 let i = i.try_into().unwrap();
                 let mut contents = vec![];
-                row.write_contents_diff(
+                let (_, _, mut prev_hyperlink_id) = row.write_contents_diff(
                     &mut contents,
                     prev_row,
+                    &self.hyperlinks,
+                    &prev.hyperlinks,
                     start,
                     width,
                     i,
@@ -552,7 +633,9 @@ impl Screen {
                     false,
                     crate::grid::Pos { row: i, col: start },
                     crate::attrs::Attrs::default(),
+                    None,
                 );
+                crate::row::close_hyperlink(&mut contents, &mut prev_hyperlink_id);
                 contents
             })
     }
@@ -1039,6 +1122,7 @@ impl Screen {
         let pos = self.grid().pos();
         let size = self.grid().size();
         let attrs = self.attrs;
+        let hyperlink_id = self.active_hyperlink;
 
         let width = c.width();
         if width.is_none() && (u32::from(c)) < 256 {
@@ -1215,7 +1299,7 @@ impl Screen {
                     // wide character, so it must have the second half of the
                     // wide character after it.
                     .unwrap();
-                next_cell.set(' ', attrs);
+                next_cell.set(' ', attrs, None);
             }
 
             let cell = self
@@ -1226,7 +1310,7 @@ impl Screen {
                 // called col_wrap() immediately before this, which ensures
                 // that self.grid().pos().col has a valid value.
                 .unwrap();
-            cell.set(c, attrs);
+            cell.set(c, attrs, hyperlink_id);
             self.grid_mut().col_inc(1);
             if width > 1 {
                 let pos = self.grid().pos();

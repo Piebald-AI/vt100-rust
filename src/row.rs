@@ -1,5 +1,70 @@
 use crate::term::BufWrite as _;
 
+pub(crate) fn write_hyperlink_start(
+    contents: &mut Vec<u8>,
+    hyperlink: &crate::Hyperlink,
+) {
+    contents.extend_from_slice(b"\x1b]8;");
+    contents.extend_from_slice(hyperlink.params());
+    contents.push(b';');
+    contents.extend_from_slice(hyperlink.uri());
+    contents.extend_from_slice(b"\x1b\\");
+}
+
+pub(crate) fn write_hyperlink_end(contents: &mut Vec<u8>) {
+    contents.extend_from_slice(b"\x1b]8;;\x1b\\");
+}
+
+pub(crate) fn write_hyperlink_diff(
+    contents: &mut Vec<u8>,
+    prev_hyperlink_id: &mut Option<crate::HyperlinkId>,
+    next_hyperlink_id: Option<crate::HyperlinkId>,
+    hyperlinks: &[crate::Hyperlink],
+) {
+    if hyperlink_eq(*prev_hyperlink_id, next_hyperlink_id, hyperlinks, hyperlinks) {
+        *prev_hyperlink_id = next_hyperlink_id;
+        return;
+    }
+
+    if prev_hyperlink_id.is_some() {
+        write_hyperlink_end(contents);
+    }
+    if let Some(id) = next_hyperlink_id {
+        if let Some(link) = hyperlinks.get(usize::try_from(id.0).ok().unwrap_or(usize::MAX)) {
+            write_hyperlink_start(contents, link);
+            *prev_hyperlink_id = Some(id);
+            return;
+        }
+    }
+    *prev_hyperlink_id = None;
+}
+
+pub(crate) fn close_hyperlink(
+    contents: &mut Vec<u8>,
+    prev_hyperlink_id: &mut Option<crate::HyperlinkId>,
+) {
+    if prev_hyperlink_id.take().is_some() {
+        write_hyperlink_end(contents);
+    }
+}
+
+pub(crate) fn hyperlink_eq(
+    a: Option<crate::HyperlinkId>,
+    b: Option<crate::HyperlinkId>,
+    a_hyperlinks: &[crate::Hyperlink],
+    b_hyperlinks: &[crate::Hyperlink],
+) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            let a = a_hyperlinks.get(usize::try_from(a.0).ok().unwrap_or(usize::MAX));
+            let b = b_hyperlinks.get(usize::try_from(b.0).ok().unwrap_or(usize::MAX));
+            a.is_some() && a == b
+        }
+        _ => false,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Row {
     cells: Vec<crate::Cell>,
@@ -143,7 +208,9 @@ impl Row {
         wrapping: bool,
         prev_pos: Option<crate::grid::Pos>,
         prev_attrs: Option<crate::attrs::Attrs>,
-    ) -> (crate::grid::Pos, crate::attrs::Attrs) {
+        prev_hyperlink_id: Option<crate::HyperlinkId>,
+        hyperlinks: &[crate::Hyperlink],
+    ) -> (crate::grid::Pos, crate::attrs::Attrs, Option<crate::HyperlinkId>) {
         let mut prev_was_wide = false;
         let default_cell = crate::Cell::new();
 
@@ -158,6 +225,7 @@ impl Row {
             }
         });
         let mut prev_attrs = prev_attrs.unwrap_or_default();
+        let mut prev_hyperlink_id = prev_hyperlink_id;
 
         let first_cell = &self.cells[usize::from(start)];
         if wrapping && first_cell == &default_cell {
@@ -210,6 +278,7 @@ impl Row {
                             .write_buf(contents);
                     }
                     prev_pos = new_pos;
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
                         prev_attrs = *attrs;
@@ -240,6 +309,12 @@ impl Row {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
                         prev_attrs = *attrs;
                     }
+                    write_hyperlink_diff(
+                        contents,
+                        &mut prev_hyperlink_id,
+                        cell.hyperlink_id(),
+                        hyperlinks,
+                    );
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
                     let cell_contents = cell.contents();
@@ -268,6 +343,7 @@ impl Row {
                     .write_buf(contents);
             }
             prev_pos = new_pos;
+            close_hyperlink(contents, &mut prev_hyperlink_id);
             if &prev_attrs != attrs {
                 attrs.write_escape_code_diff(contents, &prev_attrs);
                 prev_attrs = *attrs;
@@ -275,7 +351,7 @@ impl Row {
             crate::term::ClearRowForward.write_buf(contents);
         }
 
-        (prev_pos, prev_attrs)
+        (prev_pos, prev_attrs, prev_hyperlink_id)
     }
 
     /// Write this row's formatted cell contents without cursor positioning.
@@ -289,7 +365,9 @@ impl Row {
         start: u16,
         width: u16,
         mut prev_attrs: crate::attrs::Attrs,
-    ) -> crate::attrs::Attrs {
+        mut prev_hyperlink_id: Option<crate::HyperlinkId>,
+        hyperlinks: &[crate::Hyperlink],
+    ) -> (crate::attrs::Attrs, Option<crate::HyperlinkId>) {
         let default_cell = crate::Cell::new();
         let mut prev_was_wide = false;
 
@@ -310,7 +388,7 @@ impl Row {
         }
 
         let Some(end_col) = last_non_default else {
-            return prev_attrs;
+            return (prev_attrs, prev_hyperlink_id);
         };
 
         let mut prev_col = start;
@@ -334,8 +412,11 @@ impl Row {
             if cell.has_contents() {
                 // Fill any gap with spaces (for cells between prev_col
                 // and this col that had no content)
-                for _ in prev_col..col {
-                    contents.push(b' ');
+                if prev_col < col {
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
+                    for _ in prev_col..col {
+                        contents.push(b' ');
+                    }
                 }
                 prev_col = col;
 
@@ -344,13 +425,22 @@ impl Row {
                     attrs.write_escape_code_diff(contents, &prev_attrs);
                     prev_attrs = *attrs;
                 }
+                write_hyperlink_diff(
+                    contents,
+                    &mut prev_hyperlink_id,
+                    cell.hyperlink_id(),
+                    hyperlinks,
+                );
                 contents.extend(cell.contents().as_bytes());
                 prev_col += if cell.is_wide() { 2 } else { 1 };
             } else if cell != &default_cell {
                 // Cell has non-default attrs but no text content (e.g.
                 // background color). Emit a space with those attrs.
-                for _ in prev_col..col {
-                    contents.push(b' ');
+                if prev_col < col {
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
+                    for _ in prev_col..col {
+                        contents.push(b' ');
+                    }
                 }
                 prev_col = col;
 
@@ -359,12 +449,18 @@ impl Row {
                     attrs.write_escape_code_diff(contents, &prev_attrs);
                     prev_attrs = *attrs;
                 }
+                write_hyperlink_diff(
+                    contents,
+                    &mut prev_hyperlink_id,
+                    cell.hyperlink_id(),
+                    hyperlinks,
+                );
                 contents.push(b' ');
                 prev_col += 1;
             }
         }
 
-        prev_attrs
+        (prev_attrs, prev_hyperlink_id)
     }
 
     // while it's true that most of the logic in this is identical to
@@ -374,6 +470,8 @@ impl Row {
         &self,
         contents: &mut Vec<u8>,
         prev: &Self,
+        self_hyperlinks: &[crate::Hyperlink],
+        prev_hyperlinks: &[crate::Hyperlink],
         start: u16,
         width: u16,
         row: u16,
@@ -381,7 +479,8 @@ impl Row {
         prev_wrapping: bool,
         mut prev_pos: crate::grid::Pos,
         mut prev_attrs: crate::attrs::Attrs,
-    ) -> (crate::grid::Pos, crate::attrs::Attrs) {
+        mut prev_hyperlink_id: Option<crate::HyperlinkId>,
+    ) -> (crate::grid::Pos, crate::attrs::Attrs, Option<crate::HyperlinkId>) {
         let mut prev_was_wide = false;
 
         let first_cell = &self.cells[usize::from(start)];
@@ -399,6 +498,12 @@ impl Row {
                     .write_escape_code_diff(contents, &prev_attrs);
                 prev_attrs = *first_cell_attrs;
             }
+            write_hyperlink_diff(
+                contents,
+                &mut prev_hyperlink_id,
+                first_cell.hyperlink_id(),
+                self_hyperlinks,
+            );
             let mut cell_contents = prev_first_cell.contents();
             let need_erase = if cell_contents.is_empty() {
                 cell_contents = " ";
@@ -456,6 +561,7 @@ impl Row {
                             .write_buf(contents);
                     }
                     prev_pos = new_pos;
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
                         prev_attrs = *attrs;
@@ -466,7 +572,14 @@ impl Row {
                 }
             }
 
-            if cell != prev_cell {
+            if cell != prev_cell
+                || !hyperlink_eq(
+                    cell.hyperlink_id(),
+                    prev_cell.hyperlink_id(),
+                    self_hyperlinks,
+                    prev_hyperlinks,
+                )
+            {
                 let attrs = cell.attrs();
                 if cell.has_contents() {
                     if pos != prev_pos {
@@ -486,6 +599,12 @@ impl Row {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
                         prev_attrs = *attrs;
                     }
+                    write_hyperlink_diff(
+                        contents,
+                        &mut prev_hyperlink_id,
+                        cell.hyperlink_id(),
+                        self_hyperlinks,
+                    );
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
                     contents.extend(cell.contents().as_bytes());
@@ -513,6 +632,7 @@ impl Row {
                     .write_buf(contents);
             }
             prev_pos = new_pos;
+            close_hyperlink(contents, &mut prev_hyperlink_id);
             if &prev_attrs != attrs {
                 attrs.write_escape_code_diff(contents, &prev_attrs);
                 prev_attrs = *attrs;
@@ -544,6 +664,7 @@ impl Row {
                 .write_buf(contents);
             prev_pos = end_pos;
             if !self.wrapped {
+                close_hyperlink(contents, &mut prev_hyperlink_id);
                 crate::term::EraseChar::new(1).write_buf(contents);
             }
             let end_cell = &self.cells[usize::from(end_pos.col)];
@@ -553,11 +674,17 @@ impl Row {
                     attrs.write_escape_code_diff(contents, &prev_attrs);
                     prev_attrs = *attrs;
                 }
+                write_hyperlink_diff(
+                    contents,
+                    &mut prev_hyperlink_id,
+                    end_cell.hyperlink_id(),
+                    self_hyperlinks,
+                );
                 contents.extend(end_cell.contents().as_bytes());
                 prev_pos.col += if end_cell.is_wide() { 2 } else { 1 };
             }
         }
 
-        (prev_pos, prev_attrs)
+        (prev_pos, prev_attrs, prev_hyperlink_id)
     }
 }

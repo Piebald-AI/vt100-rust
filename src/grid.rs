@@ -248,10 +248,12 @@ impl Grid {
     pub fn write_contents_formatted_full(
         &self,
         contents: &mut Vec<u8>,
+        hyperlinks: &[crate::Hyperlink],
     ) -> crate::attrs::Attrs {
         crate::term::ClearAttrs.write_buf(contents);
 
         let mut prev_attrs = crate::attrs::Attrs::default();
+        let mut prev_hyperlink_id = None;
         let mut wrapping = false;
 
         for (i, row) in self.all_rows().enumerate() {
@@ -259,33 +261,38 @@ impl Grid {
                 contents.extend_from_slice(b"\r\n");
             }
 
-            prev_attrs = row.write_contents_formatted_inline(
+            (prev_attrs, prev_hyperlink_id) = row.write_contents_formatted_inline(
                 contents,
                 0,
                 self.size.cols,
                 prev_attrs,
+                prev_hyperlink_id,
+                hyperlinks,
             );
             wrapping = row.wrapped();
         }
 
+        crate::row::close_hyperlink(contents, &mut prev_hyperlink_id);
         prev_attrs
     }
 
     pub fn write_contents_formatted(
         &self,
         contents: &mut Vec<u8>,
+        hyperlinks: &[crate::Hyperlink],
     ) -> crate::attrs::Attrs {
         crate::term::ClearAttrs.write_buf(contents);
         crate::term::ClearScreen.write_buf(contents);
 
         let mut prev_attrs = crate::attrs::Attrs::default();
+        let mut prev_hyperlink_id = None;
         let mut prev_pos = Pos::default();
         let mut wrapping = false;
         for (i, row) in self.visible_rows().enumerate() {
             // we limit the number of cols to a u16 (see Size), so
             // visible_rows() can never return more rows than will fit
             let i = i.try_into().unwrap();
-            let (new_pos, new_attrs) = row.write_contents_formatted(
+            let (new_pos, new_attrs, new_hyperlink_id) = row.write_contents_formatted(
                 contents,
                 0,
                 self.size.cols,
@@ -293,12 +300,16 @@ impl Grid {
                 wrapping,
                 Some(prev_pos),
                 Some(prev_attrs),
+                prev_hyperlink_id,
+                hyperlinks,
             );
             prev_pos = new_pos;
             prev_attrs = new_attrs;
+            prev_hyperlink_id = new_hyperlink_id;
             wrapping = row.wrapped();
         }
 
+        crate::row::close_hyperlink(contents, &mut prev_hyperlink_id);
         self.write_cursor_position_formatted(
             contents,
             Some(prev_pos),
@@ -313,8 +324,11 @@ impl Grid {
         contents: &mut Vec<u8>,
         prev: &Self,
         mut prev_attrs: crate::attrs::Attrs,
+        self_hyperlinks: &[crate::Hyperlink],
+        prev_hyperlinks: &[crate::Hyperlink],
     ) -> crate::attrs::Attrs {
         let mut prev_pos = prev.pos;
+        let mut prev_hyperlink_id = None;
         let mut wrapping = false;
         let mut prev_wrapping = false;
         for (i, (row, prev_row)) in
@@ -323,9 +337,11 @@ impl Grid {
             // we limit the number of cols to a u16 (see Size), so
             // visible_rows() can never return more rows than will fit
             let i = i.try_into().unwrap();
-            let (new_pos, new_attrs) = row.write_contents_diff(
+            let (new_pos, new_attrs, new_hyperlink_id) = row.write_contents_diff(
                 contents,
                 prev_row,
+                self_hyperlinks,
+                prev_hyperlinks,
                 0,
                 self.size.cols,
                 i,
@@ -333,13 +349,16 @@ impl Grid {
                 prev_wrapping,
                 prev_pos,
                 prev_attrs,
+                prev_hyperlink_id,
             );
             prev_pos = new_pos;
             prev_attrs = new_attrs;
+            prev_hyperlink_id = new_hyperlink_id;
             wrapping = row.wrapped();
             prev_wrapping = prev_row.wrapped();
         }
 
+        crate::row::close_hyperlink(contents, &mut prev_hyperlink_id);
         self.write_cursor_position_formatted(
             contents,
             Some(prev_pos),

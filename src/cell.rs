@@ -13,6 +13,7 @@ pub struct Cell {
     contents: [u8; CONTENT_BYTES],
     len: u8,
     attrs: crate::attrs::Attrs,
+    hyperlink_id: Option<crate::HyperlinkId>,
 }
 
 impl PartialEq<Self> for Cell {
@@ -21,6 +22,9 @@ impl PartialEq<Self> for Cell {
             return false;
         }
         if self.attrs != other.attrs {
+            return false;
+        }
+        if self.hyperlink_id != other.hyperlink_id {
             return false;
         }
         let len = self.len();
@@ -34,6 +38,7 @@ impl Cell {
             contents: Default::default(),
             len: 0,
             attrs: crate::attrs::Attrs::default(),
+            hyperlink_id: None,
         }
     }
 
@@ -41,7 +46,12 @@ impl Cell {
         usize::from(self.len & LEN_BITS)
     }
 
-    pub(crate) fn set(&mut self, c: char, a: crate::attrs::Attrs) {
+    pub(crate) fn set(
+        &mut self,
+        c: char,
+        a: crate::attrs::Attrs,
+        hyperlink_id: Option<crate::HyperlinkId>,
+    ) {
         self.len = 0;
         self.append_char(0, c);
         // strings in this context should always be an arbitrary character
@@ -49,6 +59,7 @@ impl Cell {
         // have to look at the first character
         self.set_wide(c.width().unwrap_or(1) > 1);
         self.attrs = a;
+        self.hyperlink_id = hyperlink_id;
     }
 
     pub(crate) fn append(&mut self, c: char) {
@@ -75,6 +86,7 @@ impl Cell {
     pub(crate) fn clear(&mut self, attrs: crate::attrs::Attrs) {
         self.len = 0;
         self.attrs = attrs;
+        self.hyperlink_id = None;
     }
 
     /// Returns the text contents of the cell.
@@ -127,6 +139,12 @@ impl Cell {
 
     pub(crate) fn attrs(&self) -> &crate::attrs::Attrs {
         &self.attrs
+    }
+
+    /// Returns the OSC 8 hyperlink identifier stored on this cell, if any.
+    #[must_use]
+    pub fn hyperlink_id(&self) -> Option<crate::HyperlinkId> {
+        self.hyperlink_id
     }
 
     /// Returns the foreground color of the cell.
