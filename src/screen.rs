@@ -799,11 +799,51 @@ impl Screen {
         self.attrs.underline()
     }
 
+    /// Returns the active underline style.
+    #[must_use]
+    pub fn underline_style(&self) -> crate::UnderlineStyle {
+        self.attrs.underline_style()
+    }
+
+    /// Returns the active underline color.
+    #[must_use]
+    pub fn underline_color(&self) -> crate::Color {
+        self.attrs.underline_color()
+    }
+
     /// Returns whether newly drawn text should be rendered with the inverse
     /// text attribute.
     #[must_use]
     pub fn inverse(&self) -> bool {
         self.attrs.inverse()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the blinking
+    /// text attribute.
+    #[must_use]
+    pub fn blink(&self) -> bool {
+        self.attrs.blink()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the invisible
+    /// text attribute.
+    #[must_use]
+    pub fn invisible(&self) -> bool {
+        self.attrs.invisible()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the
+    /// strikethrough text attribute.
+    #[must_use]
+    pub fn strikethrough(&self) -> bool {
+        self.attrs.strikethrough()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the overline
+    /// text attribute.
+    #[must_use]
+    pub fn overline(&self) -> bool {
+        self.attrs.overline()
     }
 
     pub(crate) fn grid(&self) -> &crate::grid::Grid {
@@ -1437,12 +1477,37 @@ impl Screen {
                 [1] => self.attrs.set_bold(),
                 [2] => self.attrs.set_dim(),
                 [3] => self.attrs.set_italic(true),
-                [4] => self.attrs.set_underline(true),
+                [4] | [4, 1] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::Single),
+                [4, 0] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::None),
+                [4, 2] | [21] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::Double),
+                [4, 3] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::Curly),
+                [4, 4] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::Dotted),
+                [4, 5] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::Dashed),
+                [5] => self.attrs.set_blink(true),
                 [7] => self.attrs.set_inverse(true),
+                [8] => self.attrs.set_invisible(true),
+                [9] => self.attrs.set_strikethrough(true),
                 [22] => self.attrs.set_normal_intensity(),
                 [23] => self.attrs.set_italic(false),
-                [24] => self.attrs.set_underline(false),
+                [24] => self
+                    .attrs
+                    .set_underline_style(crate::UnderlineStyle::None),
+                [25] => self.attrs.set_blink(false),
                 [27] => self.attrs.set_inverse(false),
+                [28] => self.attrs.set_invisible(false),
+                [29] => self.attrs.set_strikethrough(false),
                 [n] if (30..=37).contains(n) => {
                     self.attrs.fgcolor = crate::Color::Idx(to_u8!(*n) - 30);
                 }
@@ -1500,6 +1565,40 @@ impl Screen {
                 },
                 [49] => {
                     self.attrs.bgcolor = crate::Color::Default;
+                }
+                [53] => self.attrs.set_overline(true),
+                [55] => self.attrs.set_overline(false),
+                [58, 2, r, g, b] => {
+                    self.attrs.underline_color =
+                        crate::Color::Rgb(to_u8!(*r), to_u8!(*g), to_u8!(*b));
+                }
+                [58, 2, _, r, g, b] => {
+                    self.attrs.underline_color =
+                        crate::Color::Rgb(to_u8!(*r), to_u8!(*g), to_u8!(*b));
+                }
+                [58, 5, i] => {
+                    self.attrs.underline_color =
+                        crate::Color::Idx(to_u8!(*i));
+                }
+                [58] => match next_param!() {
+                    [2] => {
+                        let r = next_param_u8!();
+                        let g = next_param_u8!();
+                        let b = next_param_u8!();
+                        self.attrs.underline_color =
+                            crate::Color::Rgb(r, g, b);
+                    }
+                    [5] => {
+                        self.attrs.underline_color =
+                            crate::Color::Idx(next_param_u8!());
+                    }
+                    _ => {
+                        unhandled(self);
+                        return;
+                    }
+                },
+                [59] => {
+                    self.attrs.underline_color = crate::Color::Default;
                 }
                 [n] if (90..=97).contains(n) => {
                     self.attrs.fgcolor = crate::Color::Idx(to_u8!(*n) - 82);

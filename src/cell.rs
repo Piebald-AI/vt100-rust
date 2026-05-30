@@ -14,7 +14,6 @@ pub struct Cell {
     len: u8,
     attrs: crate::attrs::Attrs,
 }
-const _: () = assert!(std::mem::size_of::<Cell>() == 32);
 
 impl PartialEq<Self> for Cell {
     fn eq(&self, other: &Self) -> bool {
@@ -170,10 +169,50 @@ impl Cell {
         self.attrs.underline()
     }
 
+    /// Returns the underline style of the cell.
+    #[must_use]
+    pub fn underline_style(&self) -> crate::UnderlineStyle {
+        self.attrs.underline_style()
+    }
+
+    /// Returns the underline color of the cell.
+    #[must_use]
+    pub fn underline_color(&self) -> crate::Color {
+        self.attrs.underline_color()
+    }
+
     /// Returns whether the cell should be rendered with the inverse text
     /// attribute.
     #[must_use]
     pub fn inverse(&self) -> bool {
         self.attrs.inverse()
+    }
+
+    /// Returns whether the cell should be rendered with the blinking text
+    /// attribute.
+    #[must_use]
+    pub fn blink(&self) -> bool {
+        self.attrs.blink()
+    }
+
+    /// Returns whether the cell should be rendered with the invisible text
+    /// attribute.
+    #[must_use]
+    pub fn invisible(&self) -> bool {
+        self.attrs.invisible()
+    }
+
+    /// Returns whether the cell should be rendered with the strikethrough text
+    /// attribute.
+    #[must_use]
+    pub fn strikethrough(&self) -> bool {
+        self.attrs.strikethrough()
+    }
+
+    /// Returns whether the cell should be rendered with the overline text
+    /// attribute.
+    #[must_use]
+    pub fn overline(&self) -> bool {
+        self.attrs.overline()
     }
 }

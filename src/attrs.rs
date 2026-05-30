@@ -14,18 +14,47 @@ pub enum Color {
     Rgb(u8, u8, u8),
 }
 
-const TEXT_MODE_INTENSITY: u8 = 0b0000_0011;
-const TEXT_MODE_BOLD: u8 = 0b0000_0001;
-const TEXT_MODE_DIM: u8 = 0b0000_0010;
-const TEXT_MODE_ITALIC: u8 = 0b0000_0100;
-const TEXT_MODE_UNDERLINE: u8 = 0b0000_1000;
-const TEXT_MODE_INVERSE: u8 = 0b0001_0000;
+/// Represents the underline style for cells.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub enum UnderlineStyle {
+    /// No underline.
+    #[default]
+    None,
+
+    /// A single underline.
+    Single,
+
+    /// A double underline.
+    Double,
+
+    /// A curly underline.
+    Curly,
+
+    /// A dotted underline.
+    Dotted,
+
+    /// A dashed underline.
+    Dashed,
+}
+
+const TEXT_MODE_INTENSITY: u16 = 0b0000_0000_0000_0011;
+const TEXT_MODE_BOLD: u16 = 0b0000_0000_0000_0001;
+const TEXT_MODE_DIM: u16 = 0b0000_0000_0000_0010;
+const TEXT_MODE_ITALIC: u16 = 0b0000_0000_0000_0100;
+const TEXT_MODE_INVERSE: u16 = 0b0000_0000_0000_1000;
+const TEXT_MODE_BLINK: u16 = 0b0000_0000_0001_0000;
+const TEXT_MODE_INVISIBLE: u16 = 0b0000_0000_0010_0000;
+const TEXT_MODE_STRIKETHROUGH: u16 = 0b0000_0000_0100_0000;
+const TEXT_MODE_OVERLINE: u16 = 0b0000_0000_1000_0000;
+const TEXT_MODE_UNDERLINE_STYLE: u16 = 0b0000_0111_0000_0000;
+const TEXT_MODE_UNDERLINE_STYLE_SHIFT: u16 = 8;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Attrs {
     pub fgcolor: Color,
     pub bgcolor: Color,
-    pub mode: u8,
+    pub underline_color: Color,
+    pub mode: u16,
 }
 
 impl Attrs {
@@ -37,7 +66,7 @@ impl Attrs {
         self.mode & TEXT_MODE_DIM != 0
     }
 
-    fn intensity(&self) -> u8 {
+    fn intensity(&self) -> u16 {
         self.mode & TEXT_MODE_INTENSITY
     }
 
@@ -68,15 +97,40 @@ impl Attrs {
     }
 
     pub fn underline(&self) -> bool {
-        self.mode & TEXT_MODE_UNDERLINE != 0
+        self.underline_style() != UnderlineStyle::None
     }
 
-    pub fn set_underline(&mut self, underline: bool) {
-        if underline {
-            self.mode |= TEXT_MODE_UNDERLINE;
-        } else {
-            self.mode &= !TEXT_MODE_UNDERLINE;
+    pub fn underline_style(&self) -> UnderlineStyle {
+        match (self.mode & TEXT_MODE_UNDERLINE_STYLE)
+            >> TEXT_MODE_UNDERLINE_STYLE_SHIFT
+        {
+            0 => UnderlineStyle::None,
+            1 => UnderlineStyle::Single,
+            2 => UnderlineStyle::Double,
+            3 => UnderlineStyle::Curly,
+            4 => UnderlineStyle::Dotted,
+            5 => UnderlineStyle::Dashed,
+            _ => unreachable!(),
         }
+    }
+
+    pub fn set_underline_style(&mut self, underline_style: UnderlineStyle) {
+        self.mode &= !TEXT_MODE_UNDERLINE_STYLE;
+        self.mode |= match underline_style {
+            UnderlineStyle::None => 0,
+            UnderlineStyle::Single => 1,
+            UnderlineStyle::Double => 2,
+            UnderlineStyle::Curly => 3,
+            UnderlineStyle::Dotted => 4,
+            UnderlineStyle::Dashed => 5,
+        } << TEXT_MODE_UNDERLINE_STYLE_SHIFT;
+        if underline_style == UnderlineStyle::None {
+            self.underline_color = Color::Default;
+        }
+    }
+
+    pub fn underline_color(&self) -> Color {
+        self.underline_color
     }
 
     pub fn inverse(&self) -> bool {
@@ -88,6 +142,54 @@ impl Attrs {
             self.mode |= TEXT_MODE_INVERSE;
         } else {
             self.mode &= !TEXT_MODE_INVERSE;
+        }
+    }
+
+    pub fn blink(&self) -> bool {
+        self.mode & TEXT_MODE_BLINK != 0
+    }
+
+    pub fn set_blink(&mut self, blink: bool) {
+        if blink {
+            self.mode |= TEXT_MODE_BLINK;
+        } else {
+            self.mode &= !TEXT_MODE_BLINK;
+        }
+    }
+
+    pub fn invisible(&self) -> bool {
+        self.mode & TEXT_MODE_INVISIBLE != 0
+    }
+
+    pub fn set_invisible(&mut self, invisible: bool) {
+        if invisible {
+            self.mode |= TEXT_MODE_INVISIBLE;
+        } else {
+            self.mode &= !TEXT_MODE_INVISIBLE;
+        }
+    }
+
+    pub fn strikethrough(&self) -> bool {
+        self.mode & TEXT_MODE_STRIKETHROUGH != 0
+    }
+
+    pub fn set_strikethrough(&mut self, strikethrough: bool) {
+        if strikethrough {
+            self.mode |= TEXT_MODE_STRIKETHROUGH;
+        } else {
+            self.mode &= !TEXT_MODE_STRIKETHROUGH;
+        }
+    }
+
+    pub fn overline(&self) -> bool {
+        self.mode & TEXT_MODE_OVERLINE != 0
+    }
+
+    pub fn set_overline(&mut self, overline: bool) {
+        if overline {
+            self.mode |= TEXT_MODE_OVERLINE;
+        } else {
+            self.mode &= !TEXT_MODE_OVERLINE;
         }
     }
 
@@ -128,15 +230,40 @@ impl Attrs {
         } else {
             attrs.italic(self.italic())
         };
-        let attrs = if self.underline() == other.underline() {
+        let attrs = if self.underline_style() == other.underline_style() {
             attrs
         } else {
-            attrs.underline(self.underline())
+            attrs.underline_style(self.underline_style())
+        };
+        let attrs = if self.underline_color == other.underline_color {
+            attrs
+        } else {
+            attrs.underline_color(self.underline_color)
         };
         let attrs = if self.inverse() == other.inverse() {
             attrs
         } else {
             attrs.inverse(self.inverse())
+        };
+        let attrs = if self.blink() == other.blink() {
+            attrs
+        } else {
+            attrs.blink(self.blink())
+        };
+        let attrs = if self.invisible() == other.invisible() {
+            attrs
+        } else {
+            attrs.invisible(self.invisible())
+        };
+        let attrs = if self.strikethrough() == other.strikethrough() {
+            attrs
+        } else {
+            attrs.strikethrough(self.strikethrough())
+        };
+        let attrs = if self.overline() == other.overline() {
+            attrs
+        } else {
+            attrs.overline(self.overline())
         };
 
         attrs.write_buf(contents);

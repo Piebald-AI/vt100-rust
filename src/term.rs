@@ -116,10 +116,15 @@ pub enum Intensity {
 pub struct Attrs {
     fgcolor: Option<crate::Color>,
     bgcolor: Option<crate::Color>,
+    underline_color: Option<crate::Color>,
     intensity: Option<Intensity>,
     italic: Option<bool>,
-    underline: Option<bool>,
+    underline_style: Option<crate::attrs::UnderlineStyle>,
     inverse: Option<bool>,
+    blink: Option<bool>,
+    invisible: Option<bool>,
+    strikethrough: Option<bool>,
+    overline: Option<bool>,
 }
 
 impl Attrs {
@@ -143,13 +148,41 @@ impl Attrs {
         self
     }
 
-    pub fn underline(mut self, underline: bool) -> Self {
-        self.underline = Some(underline);
+    pub fn underline_style(
+        mut self,
+        underline_style: crate::attrs::UnderlineStyle,
+    ) -> Self {
+        self.underline_style = Some(underline_style);
+        self
+    }
+
+    pub fn underline_color(mut self, underline_color: crate::Color) -> Self {
+        self.underline_color = Some(underline_color);
         self
     }
 
     pub fn inverse(mut self, inverse: bool) -> Self {
         self.inverse = Some(inverse);
+        self
+    }
+
+    pub fn blink(mut self, blink: bool) -> Self {
+        self.blink = Some(blink);
+        self
+    }
+
+    pub fn invisible(mut self, invisible: bool) -> Self {
+        self.invisible = Some(invisible);
+        self
+    }
+
+    pub fn strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = Some(strikethrough);
+        self
+    }
+
+    pub fn overline(mut self, overline: bool) -> Self {
+        self.overline = Some(overline);
         self
     }
 }
@@ -160,10 +193,15 @@ impl BufWrite for Attrs {
     fn write_buf(&self, buf: &mut Vec<u8>) {
         if self.fgcolor.is_none()
             && self.bgcolor.is_none()
+            && self.underline_color.is_none()
             && self.intensity.is_none()
             && self.italic.is_none()
-            && self.underline.is_none()
+            && self.underline_style.is_none()
             && self.inverse.is_none()
+            && self.blink.is_none()
+            && self.invisible.is_none()
+            && self.strikethrough.is_none()
+            && self.overline.is_none()
         {
             return;
         }
@@ -171,14 +209,27 @@ impl BufWrite for Attrs {
         buf.extend_from_slice(b"\x1b[");
         let mut first = true;
 
-        macro_rules! write_param {
-            ($i:expr) => {{
+        macro_rules! begin_param {
+            () => {{
                 if first {
                     first = false;
                 } else {
                     buf.push(b';');
                 }
+            }};
+        }
+
+        macro_rules! write_param {
+            ($i:expr) => {{
+                begin_param!();
                 extend_itoa(buf, $i);
+            }};
+        }
+
+        macro_rules! write_param_bytes {
+            ($bytes:expr) => {{
+                begin_param!();
+                buf.extend_from_slice($bytes);
             }};
         }
 
@@ -250,11 +301,40 @@ impl BufWrite for Attrs {
             }
         }
 
-        if let Some(underline) = self.underline {
-            if underline {
-                write_param!(4);
-            } else {
-                write_param!(24);
+        if let Some(underline_style) = self.underline_style {
+            match underline_style {
+                crate::attrs::UnderlineStyle::None => write_param!(24),
+                crate::attrs::UnderlineStyle::Single => write_param!(4),
+                crate::attrs::UnderlineStyle::Double => {
+                    write_param_bytes!(b"4:2");
+                }
+                crate::attrs::UnderlineStyle::Curly => {
+                    write_param_bytes!(b"4:3");
+                }
+                crate::attrs::UnderlineStyle::Dotted => {
+                    write_param_bytes!(b"4:4");
+                }
+                crate::attrs::UnderlineStyle::Dashed => {
+                    write_param_bytes!(b"4:5");
+                }
+            }
+        }
+
+        if let Some(underline_color) = self.underline_color {
+            match underline_color {
+                crate::Color::Default => write_param!(59),
+                crate::Color::Idx(i) => {
+                    write_param_bytes!(b"58:5:");
+                    extend_itoa(buf, i);
+                }
+                crate::Color::Rgb(r, g, b) => {
+                    write_param_bytes!(b"58:2::");
+                    extend_itoa(buf, r);
+                    buf.push(b':');
+                    extend_itoa(buf, g);
+                    buf.push(b':');
+                    extend_itoa(buf, b);
+                }
             }
         }
 
@@ -263,6 +343,38 @@ impl BufWrite for Attrs {
                 write_param!(7);
             } else {
                 write_param!(27);
+            }
+        }
+
+        if let Some(blink) = self.blink {
+            if blink {
+                write_param!(5);
+            } else {
+                write_param!(25);
+            }
+        }
+
+        if let Some(invisible) = self.invisible {
+            if invisible {
+                write_param!(8);
+            } else {
+                write_param!(28);
+            }
+        }
+
+        if let Some(strikethrough) = self.strikethrough {
+            if strikethrough {
+                write_param!(9);
+            } else {
+                write_param!(29);
+            }
+        }
+
+        if let Some(overline) = self.overline {
+            if overline {
+                write_param!(53);
+            } else {
+                write_param!(55);
             }
         }
 
