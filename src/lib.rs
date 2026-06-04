@@ -52,6 +52,7 @@ mod callbacks;
 mod cell;
 mod grid;
 mod hyperlink;
+mod palette;
 mod parser;
 mod perform;
 mod row;
@@ -62,5 +63,9 @@ pub use attrs::{Color, UnderlineStyle};
 pub use callbacks::Callbacks;
 pub use cell::Cell;
 pub use hyperlink::{Hyperlink, HyperlinkId};
+pub use palette::{ColorRole, Palette, ResolvedColor, RgbColor};
 pub use parser::Parser;
-pub use screen::{MouseProtocolEncoding, MouseProtocolMode, Screen};
+pub use screen::{
+    MouseProtocolEncoding, MouseProtocolMode, Screen, SerializeColorMode,
+    SerializeContext, SerializeOptions,
+};

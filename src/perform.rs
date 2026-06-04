@@ -216,6 +216,49 @@ impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB> {
             [b"8", params, uri] => {
                 self.screen.set_hyperlink(params, uri);
             }
+            [b"4", rest @ ..] => {
+                if !handle_indexed_palette_osc(&mut self.screen, rest) {
+                    self.callbacks.unhandled_osc(&mut self.screen, params);
+                }
+            }
+            [b"10", color] => {
+                if let Some(color) = crate::palette::parse_color(color) {
+                    self.screen.palette_mut().set_foreground(color);
+                } else if *color != b"?" {
+                    self.callbacks.unhandled_osc(&mut self.screen, params);
+                }
+            }
+            [b"11", color] => {
+                if let Some(color) = crate::palette::parse_color(color) {
+                    self.screen.palette_mut().set_background(color);
+                } else if *color != b"?" {
+                    self.callbacks.unhandled_osc(&mut self.screen, params);
+                }
+            }
+            [b"12", color] => {
+                if let Some(color) = crate::palette::parse_color(color) {
+                    self.screen.palette_mut().set_cursor(color);
+                } else if *color != b"?" {
+                    self.callbacks.unhandled_osc(&mut self.screen, params);
+                }
+            }
+            [b"104"] => {
+                self.screen.palette_mut().reset_indexed(None);
+            }
+            [b"104", indexes @ ..] => {
+                if !handle_indexed_palette_reset(&mut self.screen, indexes) {
+                    self.callbacks.unhandled_osc(&mut self.screen, params);
+                }
+            }
+            [b"110"] => {
+                self.screen.palette_mut().reset_foreground();
+            }
+            [b"111"] => {
+                self.screen.palette_mut().reset_background();
+            }
+            [b"112"] => {
+                self.screen.palette_mut().reset_cursor();
+            }
             [b"52", ty, data] => {
                 match (
                     ty.iter().all(|c| CLIPBOARD_SELECTOR.contains(c)),
@@ -245,6 +288,45 @@ impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB> {
             }
         }
     }
+}
+
+fn parse_palette_index(bytes: &[u8]) -> Option<u8> {
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+fn handle_indexed_palette_osc(
+    screen: &mut crate::Screen,
+    params: &[&[u8]],
+) -> bool {
+    if params.len() % 2 != 0 {
+        return false;
+    }
+    for pair in params.chunks_exact(2) {
+        let Some(index) = parse_palette_index(pair[0]) else {
+            return false;
+        };
+        if pair[1] == b"?" {
+            continue;
+        }
+        let Some(color) = crate::palette::parse_color(pair[1]) else {
+            return false;
+        };
+        screen.palette_mut().set_indexed(index, color);
+    }
+    true
+}
+
+fn handle_indexed_palette_reset(
+    screen: &mut crate::Screen,
+    indexes: &[&[u8]],
+) -> bool {
+    for index in indexes {
+        let Some(index) = parse_palette_index(index) else {
+            return false;
+        };
+        screen.palette_mut().reset_indexed(Some(index));
+    }
+    true
 }
 
 fn canonicalize_params_1(params: &vte::Params, default: u16) -> u16 {

@@ -21,7 +21,12 @@ pub(crate) fn write_hyperlink_diff(
     next_hyperlink_id: Option<crate::HyperlinkId>,
     hyperlinks: &[crate::Hyperlink],
 ) {
-    if hyperlink_eq(*prev_hyperlink_id, next_hyperlink_id, hyperlinks, hyperlinks) {
+    if hyperlink_eq(
+        *prev_hyperlink_id,
+        next_hyperlink_id,
+        hyperlinks,
+        hyperlinks,
+    ) {
         *prev_hyperlink_id = next_hyperlink_id;
         return;
     }
@@ -30,7 +35,9 @@ pub(crate) fn write_hyperlink_diff(
         write_hyperlink_end(contents);
     }
     if let Some(id) = next_hyperlink_id {
-        if let Some(link) = hyperlinks.get(usize::try_from(id.0).ok().unwrap_or(usize::MAX)) {
+        if let Some(link) =
+            hyperlinks.get(usize::try_from(id.0).ok().unwrap_or(usize::MAX))
+        {
             write_hyperlink_start(contents, link);
             *prev_hyperlink_id = Some(id);
             return;
@@ -57,8 +64,10 @@ pub(crate) fn hyperlink_eq(
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => {
-            let a = a_hyperlinks.get(usize::try_from(a.0).ok().unwrap_or(usize::MAX));
-            let b = b_hyperlinks.get(usize::try_from(b.0).ok().unwrap_or(usize::MAX));
+            let a = a_hyperlinks
+                .get(usize::try_from(a.0).ok().unwrap_or(usize::MAX));
+            let b = b_hyperlinks
+                .get(usize::try_from(b.0).ok().unwrap_or(usize::MAX));
             a.is_some() && a == b
         }
         _ => false,
@@ -210,7 +219,11 @@ impl Row {
         prev_attrs: Option<crate::attrs::Attrs>,
         prev_hyperlink_id: Option<crate::HyperlinkId>,
         hyperlinks: &[crate::Hyperlink],
-    ) -> (crate::grid::Pos, crate::attrs::Attrs, Option<crate::HyperlinkId>) {
+    ) -> (
+        crate::grid::Pos,
+        crate::attrs::Attrs,
+        Option<crate::HyperlinkId>,
+    ) {
         let mut prev_was_wide = false;
         let default_cell = crate::Cell::new();
 
@@ -463,6 +476,115 @@ impl Row {
         (prev_attrs, prev_hyperlink_id)
     }
 
+    pub fn write_contents_formatted_inline_with_context(
+        &self,
+        contents: &mut Vec<u8>,
+        start: u16,
+        width: u16,
+        mut prev_attrs: crate::attrs::Attrs,
+        mut prev_hyperlink_id: Option<crate::HyperlinkId>,
+        hyperlinks: &[crate::Hyperlink],
+        context: &crate::SerializeContext<'_>,
+    ) -> (crate::attrs::Attrs, Option<crate::HyperlinkId>) {
+        let default_cell = crate::Cell::new();
+        let include_text_cells = context.color_mode
+            == crate::SerializeColorMode::ResolvePaletteToRgb;
+        let mut prev_was_wide = false;
+        let mut last_non_default: Option<u16> = None;
+        for (col, cell) in self
+            .cells()
+            .enumerate()
+            .skip(usize::from(start))
+            .take(usize::from(width))
+        {
+            let col: u16 = col.try_into().unwrap();
+            if cell != &default_cell
+                || (include_text_cells && cell.has_contents())
+            {
+                last_non_default = Some(col);
+            }
+        }
+
+        let Some(end_col) = last_non_default else {
+            return (prev_attrs, prev_hyperlink_id);
+        };
+
+        let mut prev_col = start;
+        for (col, cell) in self
+            .cells()
+            .enumerate()
+            .skip(usize::from(start))
+            .take(usize::from(width))
+        {
+            if prev_was_wide {
+                prev_was_wide = false;
+                continue;
+            }
+            prev_was_wide = cell.is_wide();
+
+            let col: u16 = col.try_into().unwrap();
+            if col > end_col {
+                break;
+            }
+
+            if cell.has_contents() {
+                if prev_col < col {
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
+                    for _ in prev_col..col {
+                        contents.push(b' ');
+                    }
+                }
+                prev_col = col;
+
+                let attrs = cell.attrs();
+                if &prev_attrs != attrs || include_text_cells {
+                    attrs.write_escape_code_diff_with_context(
+                        contents,
+                        &prev_attrs,
+                        context,
+                    );
+                    prev_attrs = *attrs;
+                }
+                write_hyperlink_diff(
+                    contents,
+                    &mut prev_hyperlink_id,
+                    cell.hyperlink_id(),
+                    hyperlinks,
+                );
+                contents.extend(cell.contents().as_bytes());
+                prev_col += if cell.is_wide() { 2 } else { 1 };
+            } else if cell != &default_cell {
+                if prev_col < col {
+                    close_hyperlink(contents, &mut prev_hyperlink_id);
+                    for _ in prev_col..col {
+                        contents.push(b' ');
+                    }
+                }
+                prev_col = col;
+
+                let attrs = cell.attrs();
+                if &prev_attrs != attrs || include_text_cells {
+                    attrs.write_escape_code_diff_with_context(
+                        contents,
+                        &prev_attrs,
+                        context,
+                    );
+                    prev_attrs = *attrs;
+                }
+                write_hyperlink_diff(
+                    contents,
+                    &mut prev_hyperlink_id,
+                    cell.hyperlink_id(),
+                    hyperlinks,
+                );
+                contents.push(b' ');
+                prev_col += 1;
+            }
+        }
+
+        (prev_attrs, prev_hyperlink_id)
+    }
+
     // while it's true that most of the logic in this is identical to
     // write_contents_formatted, i can't figure out how to break out the
     // common parts without making things noticeably slower.
@@ -480,7 +602,11 @@ impl Row {
         mut prev_pos: crate::grid::Pos,
         mut prev_attrs: crate::attrs::Attrs,
         mut prev_hyperlink_id: Option<crate::HyperlinkId>,
-    ) -> (crate::grid::Pos, crate::attrs::Attrs, Option<crate::HyperlinkId>) {
+    ) -> (
+        crate::grid::Pos,
+        crate::attrs::Attrs,
+        Option<crate::HyperlinkId>,
+    ) {
         let mut prev_was_wide = false;
 
         let first_cell = &self.cells[usize::from(start)];

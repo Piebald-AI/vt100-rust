@@ -198,8 +198,22 @@ impl Grid {
         self.scrollback_len
     }
 
+    pub fn set_scrollback_len(&mut self, len: usize) {
+        self.scrollback_len = len;
+        while self.scrollback.len() > self.scrollback_len {
+            self.scrollback.pop_front();
+        }
+        self.scrollback_offset =
+            self.scrollback_offset.min(self.scrollback.len());
+    }
+
     pub fn scrollback_rows_len(&self) -> usize {
         self.scrollback.len()
+    }
+
+    pub fn clear_scrollback(&mut self) {
+        self.scrollback.clear();
+        self.scrollback_offset = 0;
     }
 
     pub fn scrollback(&self) -> usize {
@@ -245,6 +259,57 @@ impl Grid {
     /// Write the formatted contents of the full buffer (scrollback +
     /// screen) with ANSI escape codes preserved. Uses newline-based output
     /// instead of cursor positioning, avoiding u16 row index limitations.
+    pub fn write_replay_contents(
+        &self,
+        contents: &mut Vec<u8>,
+        include_scrollback: bool,
+        scrollback_limit: Option<usize>,
+        hyperlinks: &[crate::Hyperlink],
+        context: &crate::SerializeContext<'_>,
+    ) -> crate::attrs::Attrs {
+        crate::term::ClearAttrs.write_buf(contents);
+
+        let scrollback_skip = if include_scrollback {
+            let retained = scrollback_limit
+                .map_or(self.scrollback.len(), |limit| {
+                    limit.min(self.scrollback.len())
+                });
+            self.scrollback.len() - retained
+        } else {
+            self.scrollback.len()
+        };
+        let rows = self
+            .scrollback
+            .iter()
+            .skip(scrollback_skip)
+            .chain(self.rows.iter());
+
+        let mut prev_attrs = crate::attrs::Attrs::default();
+        let mut prev_hyperlink_id = None;
+        let mut wrapping = false;
+
+        for (i, row) in rows.enumerate() {
+            if i > 0 && !wrapping {
+                contents.extend_from_slice(b"\r\n");
+            }
+
+            (prev_attrs, prev_hyperlink_id) = row
+                .write_contents_formatted_inline_with_context(
+                    contents,
+                    0,
+                    self.size.cols,
+                    prev_attrs,
+                    prev_hyperlink_id,
+                    hyperlinks,
+                    context,
+                );
+            wrapping = row.wrapped();
+        }
+
+        crate::row::close_hyperlink(contents, &mut prev_hyperlink_id);
+        prev_attrs
+    }
+
     pub fn write_contents_formatted_full(
         &self,
         contents: &mut Vec<u8>,
@@ -261,14 +326,15 @@ impl Grid {
                 contents.extend_from_slice(b"\r\n");
             }
 
-            (prev_attrs, prev_hyperlink_id) = row.write_contents_formatted_inline(
-                contents,
-                0,
-                self.size.cols,
-                prev_attrs,
-                prev_hyperlink_id,
-                hyperlinks,
-            );
+            (prev_attrs, prev_hyperlink_id) = row
+                .write_contents_formatted_inline(
+                    contents,
+                    0,
+                    self.size.cols,
+                    prev_attrs,
+                    prev_hyperlink_id,
+                    hyperlinks,
+                );
             wrapping = row.wrapped();
         }
 
@@ -292,17 +358,18 @@ impl Grid {
             // we limit the number of cols to a u16 (see Size), so
             // visible_rows() can never return more rows than will fit
             let i = i.try_into().unwrap();
-            let (new_pos, new_attrs, new_hyperlink_id) = row.write_contents_formatted(
-                contents,
-                0,
-                self.size.cols,
-                i,
-                wrapping,
-                Some(prev_pos),
-                Some(prev_attrs),
-                prev_hyperlink_id,
-                hyperlinks,
-            );
+            let (new_pos, new_attrs, new_hyperlink_id) = row
+                .write_contents_formatted(
+                    contents,
+                    0,
+                    self.size.cols,
+                    i,
+                    wrapping,
+                    Some(prev_pos),
+                    Some(prev_attrs),
+                    prev_hyperlink_id,
+                    hyperlinks,
+                );
             prev_pos = new_pos;
             prev_attrs = new_attrs;
             prev_hyperlink_id = new_hyperlink_id;
@@ -337,20 +404,21 @@ impl Grid {
             // we limit the number of cols to a u16 (see Size), so
             // visible_rows() can never return more rows than will fit
             let i = i.try_into().unwrap();
-            let (new_pos, new_attrs, new_hyperlink_id) = row.write_contents_diff(
-                contents,
-                prev_row,
-                self_hyperlinks,
-                prev_hyperlinks,
-                0,
-                self.size.cols,
-                i,
-                wrapping,
-                prev_wrapping,
-                prev_pos,
-                prev_attrs,
-                prev_hyperlink_id,
-            );
+            let (new_pos, new_attrs, new_hyperlink_id) = row
+                .write_contents_diff(
+                    contents,
+                    prev_row,
+                    self_hyperlinks,
+                    prev_hyperlinks,
+                    0,
+                    self.size.cols,
+                    i,
+                    wrapping,
+                    prev_wrapping,
+                    prev_pos,
+                    prev_attrs,
+                    prev_hyperlink_id,
+                );
             prev_pos = new_pos;
             prev_attrs = new_attrs;
             prev_hyperlink_id = new_hyperlink_id;
@@ -798,7 +866,7 @@ impl Grid {
             let mut prev_pos = self.pos;
             self.pos.col = 0;
             let scrolled = self.row_inc_scroll(1);
-            prev_pos.row -= scrolled;
+            prev_pos.row = prev_pos.row.saturating_sub(scrolled);
             let new_pos = self.pos;
             self.drawing_row_mut(prev_pos.row)
                 // we assume self.pos.row is always valid, and so prev_pos.row

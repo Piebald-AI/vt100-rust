@@ -198,22 +198,62 @@ impl Attrs {
         contents: &mut Vec<u8>,
         other: &Self,
     ) {
-        if self != other && self == &Self::default() {
+        self.write_escape_code_diff_inner(contents, other, None);
+    }
+
+    /// Writes the SGR difference between two attribute sets using a
+    /// serialization context.
+    pub fn write_escape_code_diff_with_context(
+        &self,
+        contents: &mut Vec<u8>,
+        other: &Self,
+        context: &crate::SerializeContext<'_>,
+    ) {
+        self.write_escape_code_diff_inner(contents, other, Some(context));
+    }
+
+    fn write_escape_code_diff_inner(
+        &self,
+        contents: &mut Vec<u8>,
+        other: &Self,
+        context: Option<&crate::SerializeContext<'_>>,
+    ) {
+        if self != other && self == &Self::default() && context.is_none() {
             crate::term::ClearAttrs.write_buf(contents);
             return;
         }
 
         let attrs = crate::term::Attrs::default();
 
-        let attrs = if self.fgcolor == other.fgcolor {
+        let self_fg = resolve_color(
+            self.fgcolor,
+            crate::ColorRole::Foreground,
+            context,
+        );
+        let other_fg = resolve_previous_color(
+            other.fgcolor,
+            crate::ColorRole::Foreground,
+            context,
+        );
+        let attrs = if self_fg == other_fg {
             attrs
         } else {
-            attrs.fgcolor(self.fgcolor)
+            attrs.fgcolor(self_fg)
         };
-        let attrs = if self.bgcolor == other.bgcolor {
+        let self_bg = resolve_color(
+            self.bgcolor,
+            crate::ColorRole::Background,
+            context,
+        );
+        let other_bg = resolve_previous_color(
+            other.bgcolor,
+            crate::ColorRole::Background,
+            context,
+        );
+        let attrs = if self_bg == other_bg {
             attrs
         } else {
-            attrs.bgcolor(self.bgcolor)
+            attrs.bgcolor(self_bg)
         };
         let attrs = if self.intensity() == other.intensity() {
             attrs
@@ -235,10 +275,20 @@ impl Attrs {
         } else {
             attrs.underline_style(self.underline_style())
         };
-        let attrs = if self.underline_color == other.underline_color {
+        let self_underline = resolve_color(
+            self.underline_color,
+            crate::ColorRole::Underline,
+            context,
+        );
+        let other_underline = resolve_previous_color(
+            other.underline_color,
+            crate::ColorRole::Underline,
+            context,
+        );
+        let attrs = if self_underline == other_underline {
             attrs
         } else {
-            attrs.underline_color(self.underline_color)
+            attrs.underline_color(self_underline)
         };
         let attrs = if self.inverse() == other.inverse() {
             attrs
@@ -267,5 +317,34 @@ impl Attrs {
         };
 
         attrs.write_buf(contents);
+    }
+}
+
+fn resolve_previous_color(
+    color: Color,
+    role: crate::ColorRole,
+    context: Option<&crate::SerializeContext<'_>>,
+) -> Color {
+    if context.is_some() && color == Color::Default {
+        return Color::Default;
+    }
+    resolve_color(color, role, context)
+}
+
+fn resolve_color(
+    color: Color,
+    role: crate::ColorRole,
+    context: Option<&crate::SerializeContext<'_>>,
+) -> Color {
+    let Some(context) = context else {
+        return color;
+    };
+    if context.color_mode == crate::SerializeColorMode::PreserveSemantic {
+        return color;
+    }
+    match context.palette.resolve_color(color, role) {
+        crate::ResolvedColor::Default => Color::Default,
+        crate::ResolvedColor::Indexed(index) => Color::Idx(index),
+        crate::ResolvedColor::Rgb(rgb) => Color::Rgb(rgb.r, rgb.g, rgb.b),
     }
 }

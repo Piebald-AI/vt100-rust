@@ -14,10 +14,14 @@ fn parsing_and_cell_metadata() {
     let link = screen.cell_hyperlink(0, 0).unwrap();
     assert_eq!(link.params(), b"");
     assert_eq!(link.uri(), b"https://example.com");
-    assert_eq!(screen.cell(0, 3).unwrap().hyperlink_id(), screen.cell(0, 0).unwrap().hyperlink_id());
+    assert_eq!(
+        screen.cell(0, 3).unwrap().hyperlink_id(),
+        screen.cell(0, 0).unwrap().hyperlink_id()
+    );
     assert!(screen.cell_hyperlink(0, 4).is_none());
 
-    let parser = process(b"\x1b]8;id=docs;https://example.com/docs\x1b\\docs");
+    let parser =
+        process(b"\x1b]8;id=docs;https://example.com/docs\x1b\\docs");
     let link = parser.screen().cell_hyperlink(0, 0).unwrap();
     assert_eq!(link.params(), b"id=docs");
     assert_eq!(link.uri(), b"https://example.com/docs");
@@ -65,7 +69,9 @@ fn state_formatted_full_round_trips_hyperlinks() {
 #[test]
 fn contents_formatted_full_preserves_scrollback_hyperlinks() {
     let mut parser = vt100::Parser::new(2, 8, 10);
-    parser.process(b"\x1b]8;;https://one.example\x1b\\one\x1b]8;;\x1b\\\r\ntwo\r\nthree");
+    parser.process(
+        b"\x1b]8;;https://one.example\x1b\\one\x1b]8;;\x1b\\\r\ntwo\r\nthree",
+    );
 
     let formatted = parser.screen().contents_formatted_full();
     assert!(formatted.windows(3).any(|window| window == b"\x1b]8"));
@@ -79,7 +85,9 @@ fn contents_formatted_full_preserves_scrollback_hyperlinks() {
 #[test]
 fn alternate_screen_state_round_trips_hyperlinks() {
     let mut parser = vt100::Parser::new(3, 10, 10);
-    parser.process(b"main\x1b[?1049h\x1b]8;;https://alt.example\x1b\\alt\x1b]8;;\x1b\\");
+    parser.process(
+        b"main\x1b[?1049h\x1b]8;;https://alt.example\x1b\\alt\x1b]8;;\x1b\\",
+    );
 
     let state = parser.screen().state_formatted_full();
     let mut replay = vt100::Parser::new(3, 10, 10);
@@ -92,7 +100,8 @@ fn alternate_screen_state_round_trips_hyperlinks() {
 
 #[test]
 fn erased_cells_do_not_retain_hyperlinks() {
-    let mut parser = process(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+    let mut parser =
+        process(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
     parser.process(b"\r\x1b[K");
 
     for col in 0..4 {
@@ -148,7 +157,10 @@ fn formatted_full_does_not_link_gap_filler_spaces() {
     replay.process(&state);
 
     assert_eq!(replay.screen().contents(), "A B");
-    assert_eq!(replay.screen().cell_hyperlink(0, 0).unwrap().uri(), b"https://x");
+    assert_eq!(
+        replay.screen().cell_hyperlink(0, 0).unwrap().uri(),
+        b"https://x"
+    );
     assert!(replay.screen().cell_hyperlink(0, 1).is_none());
     assert!(replay.screen().cell_hyperlink(0, 2).is_none());
 }
@@ -185,8 +197,14 @@ fn state_formatted_full_restores_active_hyperlink() {
     replay.process(b"c");
 
     assert_eq!(original.screen().contents(), replay.screen().contents());
-    assert_eq!(original.screen().cell_hyperlink(0, 2).unwrap().uri(), b"https://x");
-    assert_eq!(replay.screen().cell_hyperlink(0, 2).unwrap().uri(), b"https://x");
+    assert_eq!(
+        original.screen().cell_hyperlink(0, 2).unwrap().uri(),
+        b"https://x"
+    );
+    assert_eq!(
+        replay.screen().cell_hyperlink(0, 2).unwrap().uri(),
+        b"https://x"
+    );
 }
 
 #[test]
@@ -200,7 +218,10 @@ fn state_diff_restores_active_hyperlink() {
     replay.process(&diff);
     replay.process(b"c");
 
-    assert_eq!(replay.screen().cell_hyperlink(0, 2).unwrap().uri(), b"https://x");
+    assert_eq!(
+        replay.screen().cell_hyperlink(0, 2).unwrap().uri(),
+        b"https://x"
+    );
 }
 
 #[test]
@@ -209,7 +230,9 @@ fn state_diff_closes_previous_active_hyperlink_before_content_changes() {
     prev.process(b"\x1b]8;;https://x\x1b\\");
 
     let mut next = vt100::Parser::new(1, 10, 10);
-    next.process(b"\x1b]8;;https://x\x1b\\\x1b]8;;\x1b\\A\x1b]8;;https://x\x1b\\");
+    next.process(
+        b"\x1b]8;;https://x\x1b\\\x1b]8;;\x1b\\A\x1b]8;;https://x\x1b\\",
+    );
 
     let diff = next.screen().state_diff(prev.screen());
 
@@ -219,5 +242,8 @@ fn state_diff_closes_previous_active_hyperlink_before_content_changes() {
 
     assert!(next.screen().cell_hyperlink(0, 0).is_none());
     assert!(replay.screen().cell_hyperlink(0, 0).is_none());
-    assert_eq!(replay.screen().active_hyperlink().unwrap().uri(), b"https://x");
+    assert_eq!(
+        replay.screen().active_hyperlink().unwrap().uri(),
+        b"https://x"
+    );
 }

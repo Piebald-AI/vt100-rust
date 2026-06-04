@@ -49,6 +49,11 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
         self.parser.advance(&mut self.screen, bytes);
     }
 
+    /// Sets the maximum number of rows retained in scrollback history.
+    pub fn set_scrollback_len(&mut self, len: usize) {
+        self.screen.screen.set_scrollback_len(len);
+    }
+
     /// Returns a reference to a [`Screen`](crate::Screen) object containing
     /// the terminal state.
     #[must_use]

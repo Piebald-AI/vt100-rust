@@ -11,6 +11,59 @@ const MODE_WRAPAROUND: u16 = 0b0000_0000_0100_0000;
 const MODE_REVERSE_WRAPAROUND: u16 = 0b0000_0000_1000_0000;
 const MODE_SEND_FOCUS: u16 = 0b0000_0001_0000_0000;
 
+/// Controls how colors are emitted by replay serializers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SerializeColorMode {
+    /// Preserve terminal semantic colors such as indexed palette references.
+    PreserveSemantic,
+    /// Resolve dynamic palette overrides to truecolor where possible.
+    ResolvePaletteToRgb,
+}
+
+/// Options for replay serialization.
+#[derive(Clone, Debug)]
+pub struct SerializeOptions {
+    /// Include main-grid scrollback history before visible screen rows.
+    pub include_scrollback: bool,
+    /// Limit the number of scrollback rows emitted.
+    pub scrollback_limit: Option<usize>,
+    /// Include the alternate screen when it is active.
+    pub include_alt_screen: bool,
+    /// Include terminal input modes and scroll region state.
+    pub include_modes: bool,
+    /// Include cursor position and visibility.
+    pub include_cursor: bool,
+    /// Include title state.
+    pub include_title: bool,
+    /// Emit OSC palette setup for dynamic palette overrides.
+    pub include_palette_setup: bool,
+    /// Controls color serialization semantics.
+    pub color_mode: SerializeColorMode,
+}
+
+impl Default for SerializeOptions {
+    fn default() -> Self {
+        Self {
+            include_scrollback: true,
+            scrollback_limit: None,
+            include_alt_screen: true,
+            include_modes: true,
+            include_cursor: true,
+            include_title: false,
+            include_palette_setup: true,
+            color_mode: SerializeColorMode::PreserveSemantic,
+        }
+    }
+}
+
+/// Serialization context used by lower-level formatting helpers.
+pub struct SerializeContext<'a> {
+    /// Dynamic palette state.
+    pub palette: &'a crate::palette::Palette,
+    /// Color serialization mode.
+    pub color_mode: SerializeColorMode,
+}
+
 /// The xterm mouse handling mode currently in use.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum MouseProtocolMode {
@@ -70,6 +123,8 @@ pub struct Screen {
     window_title: Option<Vec<u8>>,
     window_icon_name: Option<Vec<u8>>,
 
+    palette: crate::palette::Palette,
+
     hyperlinks: Vec<crate::Hyperlink>,
     active_hyperlink: Option<crate::HyperlinkId>,
 }
@@ -94,6 +149,8 @@ impl Screen {
 
             window_title: None,
             window_icon_name: None,
+
+            palette: crate::palette::Palette::default(),
 
             hyperlinks: Vec::new(),
             active_hyperlink: None,
@@ -150,13 +207,20 @@ impl Screen {
 
     /// Returns hyperlink metadata for a hyperlink identifier.
     #[must_use]
-    pub fn hyperlink(&self, id: crate::HyperlinkId) -> Option<&crate::Hyperlink> {
+    pub fn hyperlink(
+        &self,
+        id: crate::HyperlinkId,
+    ) -> Option<&crate::Hyperlink> {
         self.hyperlinks.get(usize::try_from(id.0).ok()?)
     }
 
     /// Returns hyperlink metadata for the cell at the given location, if any.
     #[must_use]
-    pub fn cell_hyperlink(&self, row: u16, col: u16) -> Option<&crate::Hyperlink> {
+    pub fn cell_hyperlink(
+        &self,
+        row: u16,
+        col: u16,
+    ) -> Option<&crate::Hyperlink> {
         self.cell(row, col)
             .and_then(|cell| cell.hyperlink_id())
             .and_then(|id| self.hyperlink(id))
@@ -182,6 +246,33 @@ impl Screen {
     pub fn size(&self) -> (u16, u16) {
         let size = self.grid().size();
         (size.rows, size.cols)
+    }
+
+    /// Sets the maximum number of rows retained in scrollback history.
+    pub fn set_scrollback_len(&mut self, len: usize) {
+        self.grid.set_scrollback_len(len);
+    }
+
+    /// Returns the configured scrollback history limit.
+    #[must_use]
+    pub fn scrollback_len(&self) -> usize {
+        self.grid.scrollback_len()
+    }
+
+    /// Returns the number of rows currently retained in scrollback history.
+    #[must_use]
+    pub fn scrollback_rows_len(&self) -> usize {
+        self.grid.scrollback_rows_len()
+    }
+
+    /// Returns the tracked dynamic palette state.
+    #[must_use]
+    pub fn palette(&self) -> &crate::palette::Palette {
+        &self.palette
+    }
+
+    pub(crate) fn palette_mut(&mut self) -> &mut crate::palette::Palette {
+        &mut self.palette
     }
 
     /// Scrolls to the given position in the scrollback.
@@ -383,7 +474,10 @@ impl Screen {
                 None,
                 &self.hyperlinks,
             );
-            crate::row::close_hyperlink(&mut contents, &mut prev_hyperlink_id);
+            crate::row::close_hyperlink(
+                &mut contents,
+                &mut prev_hyperlink_id,
+            );
             if start == 0 && width == self.grid.size().cols {
                 wrapping = row.wrapped();
             }
@@ -430,6 +524,141 @@ impl Screen {
         contents
     }
 
+    /// Serializes terminal contents according to explicit replay options.
+    #[must_use]
+    pub fn serialize_replay(&self, options: SerializeOptions) -> Vec<u8> {
+        let mut contents = vec![];
+        self.write_serialize_replay(&mut contents, &options);
+        contents
+    }
+
+    /// Serializes the main terminal buffer for persistent replay.
+    #[must_use]
+    pub fn serialize_persistent_replay(
+        &self,
+        scrollback_limit: Option<usize>,
+    ) -> Vec<u8> {
+        self.serialize_replay(SerializeOptions {
+            scrollback_limit,
+            include_alt_screen: false,
+            ..SerializeOptions::default()
+        })
+    }
+
+    /// Serializes a visually stable snapshot with dynamic palette colors
+    /// resolved to truecolor where possible.
+    #[must_use]
+    pub fn serialize_frozen_snapshot(&self) -> Vec<u8> {
+        self.serialize_replay(SerializeOptions {
+            include_scrollback: true,
+            scrollback_limit: None,
+            include_alt_screen: true,
+            include_modes: false,
+            include_cursor: false,
+            include_title: false,
+            include_palette_setup: false,
+            color_mode: SerializeColorMode::ResolvePaletteToRgb,
+        })
+    }
+
+    fn write_serialize_replay(
+        &self,
+        contents: &mut Vec<u8>,
+        options: &SerializeOptions,
+    ) {
+        if options.include_cursor {
+            crate::term::HideCursor::new(self.hide_cursor())
+                .write_buf(contents);
+        }
+        if options.include_title {
+            if let Some(title) = self.window_title() {
+                contents.extend_from_slice(b"\x1b]2;");
+                contents.extend_from_slice(title);
+                contents.extend_from_slice(b"\x1b\\");
+            }
+            if let Some(icon_name) = self.window_icon_name() {
+                contents.extend_from_slice(b"\x1b]1;");
+                contents.extend_from_slice(icon_name);
+                contents.extend_from_slice(b"\x1b\\");
+            }
+        }
+        if options.include_palette_setup
+            && options.color_mode == SerializeColorMode::PreserveSemantic
+        {
+            self.palette.write_osc_setup(contents);
+        }
+
+        let context = SerializeContext {
+            palette: &self.palette,
+            color_mode: options.color_mode,
+        };
+
+        if self.alternate_screen() && options.include_alt_screen {
+            contents.extend_from_slice(b"\x1b[?1049h");
+            let prev_attrs = self.alternate_grid.write_replay_contents(
+                contents,
+                false,
+                None,
+                &self.hyperlinks,
+                &context,
+            );
+            self.attrs.write_escape_code_diff_with_context(
+                contents,
+                &prev_attrs,
+                &context,
+            );
+            if options.include_modes {
+                self.write_scroll_region_formatted(contents);
+                if self.origin_mode() {
+                    contents.extend_from_slice(b"\x1b[?6h");
+                }
+            }
+            if options.include_cursor {
+                self.alternate_grid
+                    .write_cursor_position_formatted_with_row_offset(
+                        contents,
+                        0,
+                        self.origin_mode(),
+                        None,
+                        Some(self.attrs),
+                    );
+            }
+        } else {
+            let prev_attrs = self.grid.write_replay_contents(
+                contents,
+                options.include_scrollback,
+                options.scrollback_limit,
+                &self.hyperlinks,
+                &context,
+            );
+            self.attrs.write_escape_code_diff_with_context(
+                contents,
+                &prev_attrs,
+                &context,
+            );
+            if options.include_modes {
+                self.write_scroll_region_formatted(contents);
+                if self.origin_mode() {
+                    contents.extend_from_slice(b"\x1b[?6h");
+                }
+            }
+            if options.include_cursor {
+                self.grid.write_cursor_position_formatted_with_row_offset(
+                    contents,
+                    0,
+                    self.origin_mode(),
+                    None,
+                    Some(self.attrs),
+                );
+            }
+        }
+
+        if options.include_cursor || options.include_modes {
+            self.write_active_hyperlink_formatted(contents);
+            self.write_input_mode_formatted(contents);
+        }
+    }
+
     /// Returns escape codes suitable for replaying the full terminal buffer
     /// and restoring the current terminal state.
     ///
@@ -467,13 +696,14 @@ impl Screen {
             if self.origin_mode() {
                 contents.extend_from_slice(b"\x1b[?6h");
             }
-            self.alternate_grid.write_cursor_position_formatted_with_row_offset(
-                contents,
-                0,
-                self.origin_mode(),
-                None,
-                Some(self.attrs),
-            );
+            self.alternate_grid
+                .write_cursor_position_formatted_with_row_offset(
+                    contents,
+                    0,
+                    self.origin_mode(),
+                    None,
+                    Some(self.attrs),
+                );
             self.attrs.write_escape_code_diff(contents, &prev_attrs);
         } else {
             let prev_attrs = self
@@ -552,14 +782,15 @@ impl Screen {
         let mut prev_hyperlink_id = None;
         self.grid.all_rows().map(move |row| {
             let mut contents = vec![];
-            (prev_attrs, prev_hyperlink_id) = row.write_contents_formatted_inline(
-                &mut contents,
-                start,
-                width,
-                prev_attrs,
-                prev_hyperlink_id,
-                &self.hyperlinks,
-            );
+            (prev_attrs, prev_hyperlink_id) = row
+                .write_contents_formatted_inline(
+                    &mut contents,
+                    start,
+                    width,
+                    prev_attrs,
+                    prev_hyperlink_id,
+                    &self.hyperlinks,
+                );
             contents
         })
     }
@@ -635,7 +866,10 @@ impl Screen {
                     crate::attrs::Attrs::default(),
                     None,
                 );
-                crate::row::close_hyperlink(&mut contents, &mut prev_hyperlink_id);
+                crate::row::close_hyperlink(
+                    &mut contents,
+                    &mut prev_hyperlink_id,
+                );
                 contents
             })
     }
@@ -1497,6 +1731,7 @@ impl Screen {
             0 => self.grid_mut().erase_all_forward(attrs),
             1 => self.grid_mut().erase_all_backward(attrs),
             2 => self.grid_mut().erase_all(attrs),
+            3 => self.grid_mut().clear_scrollback(),
             _ => unhandled(self),
         }
     }
