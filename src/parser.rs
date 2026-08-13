@@ -49,6 +49,27 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
         self.parser.advance(&mut self.screen, bytes);
     }
 
+    /// Resizes the terminal in place while retaining main-grid history.
+    ///
+    /// Returns `false` without changing the parser when either dimension is
+    /// zero. The parser's decoder state is preserved across the resize.
+    pub fn set_size_preserving_history(
+        &mut self,
+        rows: u16,
+        cols: u16,
+    ) -> bool {
+        if rows == 0 || cols < 2 {
+            return false;
+        }
+        let (current_rows, current_cols) = self.screen.screen.size();
+        if rows >= current_rows && cols == current_cols {
+            self.screen.screen.set_size(rows, cols);
+        } else {
+            self.screen.screen.set_size_preserving_history(rows, cols);
+        }
+        true
+    }
+
     /// Sets the maximum number of rows retained in scrollback history.
     pub fn set_scrollback_len(&mut self, len: usize) {
         self.screen.screen.set_scrollback_len(len);

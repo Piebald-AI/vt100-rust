@@ -232,6 +232,17 @@ impl Screen {
         self.active_hyperlink.and_then(|id| self.hyperlink(id))
     }
 
+    /// Resizes the terminal while retaining main-grid history.
+    pub(crate) fn set_size_preserving_history(
+        &mut self,
+        rows: u16,
+        cols: u16,
+    ) {
+        let size = crate::grid::Size { rows, cols };
+        self.grid.set_size_preserving_history(size, true);
+        self.alternate_grid.set_size_preserving_history(size, false);
+    }
+
     /// Resizes the terminal.
     pub fn set_size(&mut self, rows: u16, cols: u16) {
         self.grid.set_size(crate::grid::Size { rows, cols });

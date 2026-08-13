@@ -107,6 +107,27 @@ impl Row {
         self.cells.iter()
     }
 
+    pub(crate) fn cell_slice(&self) -> &[crate::Cell] {
+        &self.cells
+    }
+
+    pub(crate) fn from_cells(
+        mut cells: Vec<crate::Cell>,
+        cols: u16,
+        wrapped: bool,
+    ) -> Self {
+        cells.resize(usize::from(cols), crate::Cell::new());
+        Self { cells, wrapped }
+    }
+
+    pub(crate) fn meaningful_len(&self) -> usize {
+        let empty = crate::Cell::new();
+        self.cells
+            .iter()
+            .rposition(|cell| cell != &empty)
+            .map_or(0, |index| index + 1)
+    }
+
     pub fn get(&self, col: u16) -> Option<&crate::Cell> {
         self.cells.get(usize::from(col))
     }

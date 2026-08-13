@@ -1,4 +1,207 @@
 #[test]
+fn preserving_resize_rejects_zero_dimensions() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"unchanged");
+
+    assert!(!parser.set_size_preserving_history(0, 10));
+    assert!(!parser.set_size_preserving_history(3, 0));
+    assert!(!parser.set_size_preserving_history(3, 1));
+    assert_eq!(parser.screen().size(), (3, 10));
+    assert_eq!(parser.screen().contents_full(), "unchanged");
+}
+
+#[test]
+fn preserving_resize_keeps_rows_and_columns() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
+    parser.process(b"OLDEST\r\nMIDDLE\r\nABCDEFGHIJ");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+
+    assert_eq!(parser.screen().size(), (2, 5));
+    assert_eq!(
+        parser.screen().contents_full(),
+        "OLDEST\nMIDDLE\nABCDEFGHIJ"
+    );
+}
+
+#[test]
+fn preserving_resize_keeps_partial_csi_state() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"\x1b[");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    parser.process(b"31mRED");
+
+    let cell = parser.screen().cell(0, 0).unwrap();
+    assert_eq!(cell.contents(), "R");
+    assert_eq!(cell.fgcolor(), vt100::Color::Idx(1));
+}
+
+#[test]
+fn preserving_resize_keeps_partial_osc_state() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"\x1b]2;partial");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    parser.process(b" title\x1b\\");
+
+    assert_eq!(
+        parser.screen().window_title(),
+        Some(b"partial title".as_slice())
+    );
+}
+
+#[test]
+fn preserving_resize_keeps_partial_utf8_state() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    let bytes = "界".as_bytes();
+    parser.process(&bytes[..2]);
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    parser.process(&bytes[2..]);
+
+    assert_eq!(parser.screen().contents_full(), "界");
+    assert!(parser.screen().cell(0, 0).unwrap().is_wide());
+    assert!(parser.screen().cell(0, 1).unwrap().is_wide_continuation());
+}
+
+#[test]
+fn preserving_resize_keeps_main_and_alternate_screens() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"main\x1b[?1049halt");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    assert_eq!(parser.screen().contents(), "alt");
+
+    parser.process(b"\x1b[?1049l");
+    assert_eq!(parser.screen().contents_full(), "main");
+}
+
+#[test]
+fn preserving_resize_keeps_wide_cells_together() {
+    let mut parser = vt100::Parser::new(3, 6, 10);
+    parser.process("abc界z".as_bytes());
+
+    assert!(parser.set_size_preserving_history(3, 4));
+
+    assert_eq!(parser.screen().contents_full(), "abc界z");
+    assert!(parser.screen().cell(1, 0).unwrap().is_wide());
+    assert!(parser.screen().cell(1, 1).unwrap().is_wide_continuation());
+}
+
+#[test]
+fn preserving_resize_reflows_soft_wrapped_lines_when_growing() {
+    let mut parser = vt100::Parser::new(3, 5, 10);
+    parser.process(b"abcdefghij");
+
+    assert!(parser.set_size_preserving_history(3, 10));
+
+    assert_eq!(parser.screen().contents_full(), "abcdefghij");
+}
+
+#[test]
+fn preserving_resize_clears_pending_wrap_when_line_grows() {
+    let mut parser = vt100::Parser::new(3, 5, 10);
+    parser.process(b"abcde");
+
+    assert!(parser.set_size_preserving_history(3, 10));
+    parser.process(b"X");
+
+    assert_eq!(parser.screen().contents_full(), "abcdeX");
+}
+
+#[test]
+fn preserving_resize_keeps_pending_wrap_cursor() {
+    let mut parser = vt100::Parser::new(4, 6, 10);
+    parser.process(b"abcdef");
+
+    assert!(parser.set_size_preserving_history(3, 3));
+    parser.process(b"X");
+
+    assert_eq!(parser.screen().contents_full(), "abcdefX");
+}
+
+#[test]
+fn preserving_resize_handles_repeated_shrink_and_growth() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
+    parser.process(b"one\r\ntwo\r\nthree\r\nfour");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    assert!(parser.set_size_preserving_history(5, 12));
+    assert!(parser.set_size_preserving_history(3, 7));
+
+    assert_eq!(parser.screen().contents_full(), "one\ntwo\nthree\nfour");
+}
+
+#[test]
+fn preserving_resize_honors_scrollback_limit() {
+    let mut parser = vt100::Parser::new(5, 10, 2);
+    parser.process(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+
+    assert!(parser.set_size_preserving_history(1, 10));
+
+    assert_eq!(parser.screen().scrollback_rows_len(), 2);
+    assert_eq!(parser.screen().contents_full(), "three\nfour\nfive");
+}
+
+#[test]
+fn preserving_row_shrink_remaps_active_cursor() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
+    parser.process(b"one\r\ntwo\r\nthree\r\nfour");
+
+    assert!(parser.set_size_preserving_history(2, 10));
+
+    assert_eq!(parser.screen().cursor_position(), (1, 4));
+}
+
+#[test]
+fn preserving_row_shrink_remaps_saved_cursor() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
+    parser.process(b"one\r\ntwo\x1b7\r\nthree\r\nfour");
+
+    assert!(parser.set_size_preserving_history(2, 10));
+    parser.process(b"\x1b8");
+    assert_eq!(parser.screen().cursor_position(), (0, 3));
+    parser.process(b"X");
+
+    assert_eq!(parser.screen().contents_full(), "one\ntwo\nthrXe\nfour");
+}
+
+#[test]
+fn preserving_resize_keeps_cursor_in_blank_columns() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"abc\x1b[3C");
+
+    assert!(parser.set_size_preserving_history(3, 5));
+
+    assert_eq!(parser.screen().cursor_position(), (1, 1));
+}
+
+#[test]
+fn preserving_resize_keeps_styled_blank_cells() {
+    let mut parser = vt100::Parser::new(3, 10, 10);
+    parser.process(b"\x1b[44m   ");
+
+    assert!(parser.set_size_preserving_history(3, 2));
+
+    assert_eq!(
+        parser.screen().cell(1, 0).unwrap().bgcolor(),
+        vt100::Color::Idx(4)
+    );
+}
+
+#[test]
+fn preserving_resize_keeps_saved_cursor_state() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
+    parser.process(b"first\r\nsecond\x1b7\r\nthird");
+
+    assert!(parser.set_size_preserving_history(2, 5));
+    parser.process(b"\x1b8X");
+
+    assert_eq!(parser.screen().contents_full(), "first\nsecondX\nthird");
+}
+
+#[test]
 fn runtime_scrollback_limit_trims_and_clamps() {
     let mut parser = vt100::Parser::new(3, 10, 5);
     parser.process(b"one\ntwo\nthree\nfour\nfive\nsix");
