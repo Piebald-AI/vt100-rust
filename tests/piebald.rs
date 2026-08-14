@@ -90,13 +90,37 @@ fn preserving_resize_keeps_wide_cells_together() {
 }
 
 #[test]
-fn preserving_resize_reflows_soft_wrapped_lines_when_growing() {
-    let mut parser = vt100::Parser::new(3, 5, 10);
+fn preserving_resize_keeps_physical_rows_when_growing() {
+    let mut parser = vt100::Parser::new(4, 5, 10);
+    parser.process(b"AAAAABBBBB");
+
+    assert!(parser.set_size_preserving_history(4, 10));
+    parser.process(b"\rCCCCC\r\nTAIL");
+
+    assert_eq!(parser.screen().contents_full(), "AAAAA\nCCCCC\nTAIL");
+}
+
+#[test]
+fn preserving_row_growth_keeps_wrapped_rows() {
+    let mut parser = vt100::Parser::new(2, 5, 10);
+    parser.process(b"abcdef");
+
+    assert!(parser.set_size_preserving_history(4, 5));
+    parser.process(b"X");
+
+    assert_eq!(parser.screen().contents_full(), "abcdefX");
+}
+
+#[test]
+fn preserving_resize_rejoins_rows_split_by_resize() {
+    let mut parser = vt100::Parser::new(4, 10, 10);
     parser.process(b"abcdefghij");
 
-    assert!(parser.set_size_preserving_history(3, 10));
+    assert!(parser.set_size_preserving_history(4, 5));
+    assert!(parser.set_size_preserving_history(4, 10));
+    parser.process(b"X");
 
-    assert_eq!(parser.screen().contents_full(), "abcdefghij");
+    assert_eq!(parser.screen().contents_full(), "abcdefghijX");
 }
 
 #[test]

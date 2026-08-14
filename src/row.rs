@@ -78,6 +78,7 @@ pub(crate) fn hyperlink_eq(
 pub struct Row {
     cells: Vec<crate::Cell>,
     wrapped: bool,
+    resize_wrapped: bool,
 }
 
 impl Row {
@@ -85,6 +86,7 @@ impl Row {
         Self {
             cells: vec![crate::Cell::new(); usize::from(cols)],
             wrapped: false,
+            resize_wrapped: false,
         }
     }
 
@@ -101,6 +103,7 @@ impl Row {
             cell.clear(attrs);
         }
         self.wrapped = false;
+        self.resize_wrapped = false;
     }
 
     fn cells(&self) -> impl Iterator<Item = &crate::Cell> {
@@ -117,7 +120,11 @@ impl Row {
         wrapped: bool,
     ) -> Self {
         cells.resize(usize::from(cols), crate::Cell::new());
-        Self { cells, wrapped }
+        Self {
+            cells,
+            wrapped,
+            resize_wrapped: wrapped,
+        }
     }
 
     pub(crate) fn meaningful_len(&self) -> usize {
@@ -139,12 +146,14 @@ impl Row {
     pub fn insert(&mut self, i: u16, cell: crate::Cell) {
         self.cells.insert(usize::from(i), cell);
         self.wrapped = false;
+        self.resize_wrapped = false;
     }
 
     pub fn remove(&mut self, i: u16) {
         self.clear_wide(i);
         self.cells.remove(usize::from(i));
         self.wrapped = false;
+        self.resize_wrapped = false;
     }
 
     pub fn erase(&mut self, i: u16, attrs: crate::attrs::Attrs) {
@@ -153,12 +162,14 @@ impl Row {
         self.cells[usize::from(i)].clear(attrs);
         if i == self.cols() - if wide { 2 } else { 1 } {
             self.wrapped = false;
+            self.resize_wrapped = false;
         }
     }
 
     pub fn truncate(&mut self, len: u16) {
         self.cells.truncate(usize::from(len));
         self.wrapped = false;
+        self.resize_wrapped = false;
         let last_cell = &mut self.cells[usize::from(len) - 1];
         if last_cell.is_wide() {
             last_cell.clear(*last_cell.attrs());
@@ -168,6 +179,7 @@ impl Row {
     pub fn resize(&mut self, len: u16, cell: crate::Cell) {
         self.cells.resize(usize::from(len), cell);
         self.wrapped = false;
+        self.resize_wrapped = false;
     }
 
     pub fn wrap(&mut self, wrap: bool) {
@@ -176,6 +188,10 @@ impl Row {
 
     pub fn wrapped(&self) -> bool {
         self.wrapped
+    }
+
+    pub(crate) fn resize_wrapped(&self) -> bool {
+        self.resize_wrapped
     }
 
     pub fn clear_wide(&mut self, col: u16) {

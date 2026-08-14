@@ -1088,7 +1088,7 @@ fn reflow_rows(
         }
         logical_cells.extend_from_slice(&row.cell_slice()[..row_len]);
 
-        if !row.wrapped() {
+        if !row.resize_wrapped() {
             let output_start = output.len();
             let (reflowed, boundaries) =
                 reflow_logical_cells(&logical_cells, new_cols);

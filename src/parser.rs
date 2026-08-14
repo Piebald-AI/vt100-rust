@@ -51,8 +51,8 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
 
     /// Resizes the terminal in place while retaining main-grid history.
     ///
-    /// Returns `false` without changing the parser when either dimension is
-    /// zero. The parser's decoder state is preserved across the resize.
+    /// Returns `false` without changing the parser for zero rows or fewer
+    /// than two columns. The parser's decoder state survives the resize.
     pub fn set_size_preserving_history(
         &mut self,
         rows: u16,
@@ -61,12 +61,7 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
         if rows == 0 || cols < 2 {
             return false;
         }
-        let (current_rows, current_cols) = self.screen.screen.size();
-        if rows >= current_rows && cols == current_cols {
-            self.screen.screen.set_size(rows, cols);
-        } else {
-            self.screen.screen.set_size_preserving_history(rows, cols);
-        }
+        self.screen.screen.set_size_preserving_history(rows, cols);
         true
     }
 
